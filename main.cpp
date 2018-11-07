@@ -19,8 +19,6 @@ void usage() {
 int main(int argc, char *argv[]) {
   char *infile = NULL;
   char *outfile = NULL;
-  FILE *outfile_io = stdout;
-  FILE *infile_io = stdin;
   int opt;
   opterr = 0;
 
@@ -50,26 +48,20 @@ int main(int argc, char *argv[]) {
       usage();
       return 1;
   }
-  //TODO: check infile exists, outfile does not have stuff already
-  if (infile==NULL) {
+  if (infile==NULL || outfile==NULL) {
     fprintf(stderr, "Input file unspecified\n");
     usage();
     return 1;
   }
-  if (outfile!=NULL) {
-      outfile_io = fopen(outfile, "rw");
-      fseek(outfile_io, 0, SEEK_END); // goto end of file
-      if (ftell(outfile_io) != 0) {
-        outfile_io = stdout;
-      }
-      fseek(outfile_io, 0, SEEK_SET);
+  if (!parse(infile)) {
+   fprintf(stderr, "Failed to parse input\n");
   }
-  infile_io = fopen(infile, "r");
-  parse(infile_io);
 
   run();
 
-  dump(outfile_io);
+  if (!dump(outfile)) {
+      fprintf(stderr, "Failed to write output\n");   
+  }
 
   return 0;
 }

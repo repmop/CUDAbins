@@ -1,7 +1,5 @@
 #include <stdint.h>
 #include <vector>
-#include <stdio.h>
-
 
 #ifdef TAGGING
 
@@ -27,8 +25,8 @@ typedef struct bin {
   std::vector<obj_t> *obj_list;
 } bin_t;
 
-void parse(FILE *infile);
+bool parse(char *infile);
 
 void run();
 
-void dump(FILE *outfile);
+bool dump(char *outfile);
