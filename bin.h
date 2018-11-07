@@ -1,7 +1,12 @@
 #include <stdint.h>
 #include <vector>
+#include <stdio.h>
+
 
 #ifdef TAGGING
+
+// #ifndef _BIN_H_
+// #define _BIN_H_
 
 typedef struct obj {
     uint32_t size;

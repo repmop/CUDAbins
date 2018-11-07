@@ -19,8 +19,8 @@ void usage() {
 int main(int argc, char *argv[]) {
   char *infile = NULL;
   char *outfile = NULL;
-  FILE *outfile_io;
-  FILE *infile_io;
+  FILE *outfile_io = stdout;
+  FILE *infile_io = stdin;
   int opt;
   opterr = 0;
 
