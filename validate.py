@@ -24,6 +24,8 @@ def main():
         objs = objdata["objs"]
         for i in range(num_objs):
             assert(objs[i] == bindata["objs"][i])
+            # objs fit in a bin
+            assert(objs[i] <= bin_size)
 
         # Bins are valid
         bins = bindata["bins"]
