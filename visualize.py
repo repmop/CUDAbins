@@ -4,6 +4,7 @@ from tkinter import *
 
 WIDTH = 400
 HEIGHT = 300
+app = None
 
 def color(hue):
     (r,g,b) = colorsys.hsv_to_rgb(hue, 0.9, 0.9)
@@ -13,6 +14,7 @@ class Window(Canvas):
 
     def __init__(self, master, bins, num_bins, bin_capacity):
         Canvas.__init__(self, master)
+        self.pack(fill="both", expand=True)
         self.master = master
         self.bins = bins
         self.num_bins = num_bins
@@ -56,7 +58,12 @@ class Window(Canvas):
                     top += scaleh;
                     hue += dhue;
 
+def redraw(event):
+    global WIDTH, HEIGHT, app
+    WIDTH, HEIGHT = event.width, event.height
+    app.init_window()
 def main():
+    global app
     parser = argparse.ArgumentParser(description="Visualize packed bins")
     parser.add_argument("-f", dest="in_file", metavar="FILE",
                         help="Input file", required=True)
@@ -72,8 +79,8 @@ def main():
     root = Tk()
     #size of the window
     root.geometry("%dx%d" % (WIDTH, HEIGHT))
-
     app = Window(root, bins, num_bins, bin_capacity)
+    root.bind("<Configure>", redraw)
     root.mainloop()
 
 if(__name__ == "__main__"):
