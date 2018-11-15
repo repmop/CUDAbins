@@ -1,8 +1,10 @@
 #include "bin.h"
 #include <json/json.h>
+#include <assert.h>
 #include <jsoncpp.cpp>
 #include <iostream>
 #include <fstream>
+#include <random>
 
 using namespace std;
 
@@ -63,8 +65,63 @@ bool parse(char *infile) {
     return true;
 }
 
+void check_bin(bin_t *b) {
+    uint32_t sum = 0;
+    for (obj_t obj : b->obj_list) {
+        sum += obj.size;
+    }
+    assert(b->occupancy == sum);
+    assert(0 <= b->occupancy);
+    assert(b->occupancy <= b->capacity);
+}
 
+void constrain() {
+    // Do want i to track the growing bins list here
+    for (size_t i = 0; i < bins.size(); i++) {
+        bin_t *bin = &bins[i];
+        bin_t *b;
+        bool new_bin_flag = false;
+        if (bin->occupancy > bin->capacity) {
+            b = new bin_t();
+            b->capacity = bin->capacity;
+            new_bin_flag = true;
+        }
+        while (bin->occupancy > bin->capacity) {
+            size_t r = rand() % bin->obj_list.size();
+            obj_t obj = bin->obj_list[r];
+            bin->obj_list.erase(bin->obj_list.begin() + r);
+            bin->occupancy -= obj.size;
+            b->occupancy += obj.size;
+            b->obj_list.push_back(obj);
+        }
+        if (new_bin_flag) {
+            bins.push_back(*b);
+            check_bin(&bins[i]);
+        }
+    }
+}
+
+void optimize() {
+    if (bins.size() <= 1) {
+        return;
+    }
+    size_t r = rand() % bins.size(); 
+    bin_t *bin = &bins[r];
+    while (bin->obj_list.size() > 0 && bins.size() > 1) {
+        obj_t obj = bin->obj_list.back();
+        bin->occupancy -= obj.size;
+        size_t temp_r;
+        while (r == (temp_r = rand() % bins.size()));
+        bins[temp_r].occupancy += obj.size;
+        bins[temp_r].obj_list.push_back(obj);
+        bin->obj_list.pop_back();
+    }
+    bins.erase(bins.begin() + r);
+
+}
+// #define BFD
 void run() {
+    #ifdef BFD
     sort(objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
 
@@ -84,6 +141,24 @@ void run() {
             bins.push_back(*make_bin(&obj));
         }
     }
+    #else
+    bins.push_back(*make_bin(&objs[0]));
+    for (size_t i = 1; i < num_objs; i++) {
+        obj_t obj = objs[i];
+        bins[0].obj_list.push_back(obj);
+        bins[0].occupancy += obj.size;
+    }
+    constrain();
+    const int bins_per_pass = 30;
+    const int passes = 1000;
+    for (int i = 0; i < passes; i++) {
+        for (int j = 0; j < bins_per_pass; j++) {
+            optimize();
+        }
+        constrain();
+    }
+
+    #endif
     return;
 }
 
