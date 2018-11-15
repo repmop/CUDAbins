@@ -7,7 +7,7 @@ CC_FILES   := bin.cpp main.cpp
 OBJDIR=objs
 
 CXX=g++ -m64
-CXXFLAGS=-O3 -Wall -Werror -std=c++11
+CXXFLAGS=-O0 -gdwarf-2 -Wall -Werror -std=c++11
 LDFLAGS=
 OBJS=$(OBJDIR)/bin.o $(OBJDIR)/main.o
 

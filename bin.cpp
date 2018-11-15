@@ -18,7 +18,7 @@ bin_t *make_bin(vector<obj_t> obj_list){
     b->obj_list = obj_list;
 
     uint32_t occupancy = 0;
-    for(uint32_t i = 0; i < obj_list.size(); i++){
+    for(size_t i = 0; i < obj_list.size(); i++){
         occupancy += obj_list[i].size;
     }
     b->occupancy = occupancy;
@@ -45,6 +45,8 @@ bool parse(char *infile) {
     f >> obj_data;
     bin_size = obj_data["bin_size"].asUInt();
     num_objs = obj_data["num_objs"].asUInt();
+    // cout << obj_data     << endl;
+
 
     // Initialize object array and put one obj in each bin
     objs = new obj_t[num_objs];
@@ -56,7 +58,7 @@ bool parse(char *infile) {
         objs[i].size = obj_array[i].asUInt();
 
         // TODO: aaaaaaa struct copying is scary
-        bins.push_back(*make_bin(&objs[i]));
+        // bins.push_back(*make_bin(&objs[i]));
     }
     return true;
 }
@@ -67,16 +69,38 @@ void run() {
     for(uint32_t i = 0; i < num_objs; i++) {
 
     }
-    // sort(objs, &objs[num_objs],
-    //     [](const obj_t &a, const obj_t &b) -> bool
-    // {
-    //     return a.size < b.size;
-    // });
+    sort(objs, &objs[num_objs],
+        [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
 
-    for(bin_t bin : bins) {
-        cout << bin.obj_list[0].size << endl;
+    for (size_t i = 0; i < num_objs; i++) {
+        obj_t obj = objs[i];
+        bool found_fit_flag = false;
+        for (size_t j = 0; j < bins.size(); j++) {
+            bin_t *bin = &bins[j];
+            if (bin->occupancy + obj.size <= bin->capacity) {
+                bin->occupancy += obj.size;
+                bin->obj_list.push_back(obj);
+                found_fit_flag = true;
+                break;
+            }
+        }
+        if (!found_fit_flag) {
+            bins.push_back(*make_bin(&obj));
+        }
     }
 
+    for(size_t i = 0; i < bins.size(); i++) {
+        cout << "bin " << i << ":\n";
+        bin_t bin = bins[i];
+        for (size_t j = 0; j < bin.obj_list.size(); j++) {
+            cout << bin.obj_list[j].size << "\t";
+        }
+        cout << endl;
+    }
+    // cout << endl;
+    // for(size_t i = 0; i < num_objs; i++) {
+    //     cout << objs[i].size << endl;
+    // }
     return;
 }
 
