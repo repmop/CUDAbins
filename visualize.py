@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+>>>>>>> 09b1fe674d0805a5cf9c1cda185f3167d18360ab
 import math, argparse, json, colorsys
 from tkinter import *
 
