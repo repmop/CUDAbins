@@ -65,10 +65,6 @@ bool parse(char *infile) {
 
 
 void run() {
-    // worst case # bins == # objs
-    for(uint32_t i = 0; i < num_objs; i++) {
-
-    }
     sort(objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
 
@@ -88,19 +84,6 @@ void run() {
             bins.push_back(*make_bin(&obj));
         }
     }
-
-    // for(size_t i = 0; i < bins.size(); i++) {
-    //     cout << "bin " << i << ":\n";
-    //     bin_t bin = bins[i];
-    //     for (size_t j = 0; j < bin.obj_list.size(); j++) {
-    //         cout << bin.obj_list[j].size << "\t";
-    //     }
-    //     cout << endl;
-    // }
-    // cout << endl;
-    // for(size_t i = 0; i < num_objs; i++) {
-    //     cout << objs[i].size << endl;
-    // }
     return;
 }
 
