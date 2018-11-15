@@ -5,7 +5,7 @@ WIDTH = 400
 HEIGHT = 300
 
 def color(hue):
-    (r,g,b) = colorsys.hsv_to_rgb(hue, 1, 0.5)
+    (r,g,b) = colorsys.hsv_to_rgb(hue, 0.9, 0.9)
     return "#%02x%02x%02x" % (256*r, 256*g, 256*b)
 
 class Window(Canvas):
@@ -37,8 +37,8 @@ class Window(Canvas):
 
         hue = 0.0;
         dhue = 0.05;
-        for x in range(xbins):
-            for y in range(ybins):
+        for y in range(ybins):
+            for x in range(xbins):
                 if(y*xbins + x >= self.num_bins):
                     break;
 
@@ -49,8 +49,8 @@ class Window(Canvas):
                 top = y*binh;
                 for o in self.bins[y*xbins + x]:
                     scaleh = binh * o / self.bin_capacity;
-                    self.create_rectangle(x*binw, top, (x+1)*binw,
-                                          round(top + scaleh),
+                    self.create_rectangle(x*binw, round(top),
+                                          (x+1)*binw, round(top + scaleh),
                                           fill = color(hue));
                     top += scaleh;
                     hue += dhue;
