@@ -6,7 +6,7 @@ HEIGHT = 300
 
 def color(hue):
     (r,g,b) = colorsys.hsv_to_rgb(hue, 0.9, 0.9)
-    return "#%02x%02x%02x" % (256*r, 256*g, 256*b)
+    return "#%02x%02x%02x" % (int(256*r), int(256*g), int(256*b))
 
 class Window(Canvas):
 
