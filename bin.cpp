@@ -89,14 +89,14 @@ void run() {
         }
     }
 
-    for(size_t i = 0; i < bins.size(); i++) {
-        cout << "bin " << i << ":\n";
-        bin_t bin = bins[i];
-        for (size_t j = 0; j < bin.obj_list.size(); j++) {
-            cout << bin.obj_list[j].size << "\t";
-        }
-        cout << endl;
-    }
+    // for(size_t i = 0; i < bins.size(); i++) {
+    //     cout << "bin " << i << ":\n";
+    //     bin_t bin = bins[i];
+    //     for (size_t j = 0; j < bin.obj_list.size(); j++) {
+    //         cout << bin.obj_list[j].size << "\t";
+    //     }
+    //     cout << endl;
+    // }
     // cout << endl;
     // for(size_t i = 0; i < num_objs; i++) {
     //     cout << objs[i].size << endl;
@@ -109,9 +109,25 @@ bool dump(char *outfile) {
     obj_data["bin_size"] = bin_size;
     obj_data["num_objs"] = num_objs;
     obj_data["num_bins"] = bins.size();
+    obj_data["objs"] = Json::Value(Json::arrayValue);
+    obj_data["bins"] = Json::Value(Json::arrayValue);
+    for(uint32_t i = 0; i < num_objs; i++){
+        obj_data["objs"][i] = objs[i].size;
+    }
+    for(uint32_t i = 0; i < (uint32_t) bins.size(); i++) {
+        bin_t bin = bins[i];
+        obj_data["bins"][i] = Json::Value(Json::arrayValue);
+        for (uint32_t j = 0; j < bin.obj_list.size(); j++) {
+            obj_data["bins"][i][j] = bin.obj_list[j].size;
+        }
+    }
     if (outfile==NULL) { //print results to stdout
+        cout << obj_data;
     } else { //print to file
-
+        filebuf fb;
+        fb.open(outfile, ios::out);
+        ostream f(&fb);
+        f << obj_data;
     }
     return true;
 }
