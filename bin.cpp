@@ -12,14 +12,14 @@ obj_t *objs;
 vector<bin_t> bins;
 
 // Allocate and populate a bin_t with the objs in obj_list
-bin_t *make_bin(vector<obj_t> *obj_list){
+bin_t *make_bin(vector<obj_t> obj_list){
     bin_t *b = new bin_t();
     b->capacity = bin_size;
     b->obj_list = obj_list;
 
     uint32_t occupancy = 0;
-    for(uint32_t i = 0; i < obj_list->size(); i++){
-        occupancy += (*obj_list)[i].size;
+    for(uint32_t i = 0; i < obj_list.size(); i++){
+        occupancy += obj_list[i].size;
     }
     b->occupancy = occupancy;
 
@@ -30,8 +30,7 @@ bin_t *make_bin(vector<obj_t> *obj_list){
 bin_t *make_bin(obj_t *obj){
     bin_t *b = new bin_t();
     b->capacity = bin_size;
-    b->obj_list = new vector<obj_t>(1); // TODO: find a good initial size
-    (*(b->obj_list))[0] = *obj;
+    b->obj_list.push_back(*obj);
     b->occupancy = obj->size;
 
     return b;
@@ -68,10 +67,14 @@ void run() {
     for(uint32_t i = 0; i < num_objs; i++) {
 
     }
-
+    // sort(objs, &objs[num_objs],
+    //     [](const obj_t &a, const obj_t &b) -> bool
+    // {
+    //     return a.size < b.size;
+    // });
 
     for(bin_t bin : bins) {
-        cout << (*bin.obj_list)[0].size << endl;
+        cout << bin.obj_list[0].size << endl;
     }
 
     return;
