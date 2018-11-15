@@ -1,10 +1,12 @@
+#ifndef _BIN_H_
+#define _BIN_H_
+
 #include <stdint.h>
 #include <vector>
 
-#ifdef TAGGING
+#define TAGGING
 
-// #ifndef _BIN_H_
-// #define _BIN_H_
+#ifdef TAGGING
 
 typedef struct obj {
     uint32_t size;
@@ -30,3 +32,5 @@ bool parse(char *infile);
 void run();
 
 bool dump(char *outfile);
+
+#endif /* _BIN_H_ */

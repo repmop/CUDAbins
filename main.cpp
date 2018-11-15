@@ -22,33 +22,34 @@ int main(int argc, char *argv[]) {
   int opt;
   opterr = 0;
 
-  while ((opt = getopt (argc, argv, "f:o:")) != -1)
-  switch (opt)
-  {
-    case 'f':
-      infile = optarg;
-      break;
-    case 'o':
-      outfile = optarg;
-      break;
-    case '?':
-      if (optopt == 'f') {
-        fprintf (stderr, "Option -%c requires an argument.\n", optopt);
-      } else if (optopt == 'o') {
-        fprintf (stderr, "Option -%c requires an argument.\n", optopt);
-      } else if (isprint (optopt)) {
-        fprintf (stderr, "Unknown option `-%c'.\n", optopt);
-      } else {
-        fprintf (stderr, "Unknown option character `\\x%x'.\n", optopt);
+  while ((opt = getopt(argc, argv, "f:o:")) != -1) {
+    printf("%s\n", optarg);
+    switch (opt) {
+      case 'f':
+        infile = optarg;
+        break;
+      case 'o':
+        outfile = optarg;
+        break;
+      case '?':
+        if (optopt == 'f') {
+          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+        } else if (optopt == 'o') {
+          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+        } else if (isprint (optopt)) {
+          fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+        } else {
+          fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
+          usage();
+          return 1;
+        }
+      default:
+        fprintf(stderr, "Malformed input arguments. Aborting.\n");
         usage();
         return 1;
-      }
-    default:
-      fprintf(stderr, "Malformed input arguments. Aborting.\n");
-      usage();
-      return 1;
+    }
   }
-  if (infile==NULL || outfile==NULL) {
+  if (infile==NULL) {
     fprintf(stderr, "Input file unspecified\n");
     usage();
     return 1;
@@ -60,7 +61,7 @@ int main(int argc, char *argv[]) {
   run();
 
   if (!dump(outfile)) {
-      fprintf(stderr, "Failed to write output\n");   
+      fprintf(stderr, "Failed to write output\n");
   }
 
   return 0;
