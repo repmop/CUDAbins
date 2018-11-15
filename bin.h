@@ -24,7 +24,7 @@ typedef struct obj {
 typedef struct bin {
   uint32_t occupancy;
   uint32_t capacity;
-  std::vector<obj_t> *obj_list;
+  std::vector<obj_t> obj_list;
 } bin_t;
 
 bool parse(char *infile);
