@@ -13,6 +13,7 @@ uint32_t bin_size;
 uint32_t num_objs;
 obj_t *objs;
 vector<bin_t> bins;
+vector<float> cdfs;
 alias *alias_table;
 
 // Allocate and populate a bin_t with the objs in obj_list
@@ -99,22 +100,35 @@ void constrain() {
             check_bin(&bins[i]);
         }
     }
+}
 
-    int sum_empty_space = bins.size() * bin_size - total_obj_size;
-    float avg_empty = ((float) sum_empty_space) / ((float) bins.size());
-    uint32_t poor_ind, rich_ind;
-    poor_ind = rich_ind = -1;
-    while (poor_ind < bins.size() or rich_ind < bins.size()) {
+// Recalculate data structures used by rand_empty based on current bins.
+void setup_rand_empty(){
+    cdfs.resize(bins.size());
 
+    float sum_empty_space = (float)(bins.size() * bin_size - total_obj_size);
+    float cdf = 0.f;
+    for(uint32_t i = 0; i < bins.size(); i++){
+        cdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
+        cdfs[i] = cdf;
     }
+}
+
+// Select a random bin weighted in favor of empty bins. Uses data structures
+//  generated in setup_rand_empty, which may be stale.
+uint32_t rand_empty(){
+    return upper_bound(cdfs.begin(), cdfs.end(), ((float)rand()) / RAND_MAX) -
+             cdfs.begin();
 }
 
 void optimize() {
     if (bins.size() <= 1) {
         return;
     }
-    size_t r = rand() % bins.size();
+    setup_rand_empty();
+    size_t r = rand_empty(); //rand() % bins.size();
     bin_t *bin = &bins[r];
+
     while (bin->obj_list.size() > 0 && bins.size() > 1) {
         obj_t obj = bin->obj_list.back();
         bin->occupancy -= obj.size;
@@ -124,6 +138,7 @@ void optimize() {
         bins[temp_r].obj_list.push_back(obj);
         bin->obj_list.pop_back();
     }
+
     bins.erase(bins.begin() + r);
 
 }
@@ -149,20 +164,17 @@ void run() {
             bins.push_back(*make_bin(&obj));
         }
     }
+
     #else
+
     bins.push_back(*make_bin(&objs[0]));
     for (size_t i = 1; i < num_objs; i++) {
         obj_t obj = objs[i];
         bins[0].obj_list.push_back(obj);
         bins[0].occupancy += obj.size;
     }
-    bins[0].alias = {
-        .i1 = 0,
-        .i2 = 0,
-        .divider = 1.f,
-    };
     constrain();
-    const int bins_per_pass = 30;
+    const int bins_per_pass = 10;
     const int passes = 1000;
     for (int i = 0; i < passes; i++) {
         for (int j = 0; j < bins_per_pass; j++) {
