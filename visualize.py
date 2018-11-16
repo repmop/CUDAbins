@@ -24,6 +24,7 @@ class Window(Canvas):
 
     #Creation of init_window
     def init_window(self):
+        self.delete("all")
         bin_area = WIDTH * HEIGHT / self.num_bins
         # Width and height of drawn bin
         binw = math.floor(WIDTH / math.ceil(math.sqrt(self.num_bins)))
