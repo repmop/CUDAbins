@@ -8,15 +8,16 @@
 
 using namespace std;
 
+uint32_t total_obj_size = 0; //pseudo-constant
 uint32_t bin_size;
 uint32_t num_objs;
 obj_t *objs;
 vector<bin_t> bins;
+alias *alias_table;
 
 // Allocate and populate a bin_t with the objs in obj_list
 bin_t *make_bin(vector<obj_t> obj_list){
     bin_t *b = new bin_t();
-    b->capacity = bin_size;
     b->obj_list = obj_list;
 
     uint32_t occupancy = 0;
@@ -31,7 +32,6 @@ bin_t *make_bin(vector<obj_t> obj_list){
 // Allocate and populate a bin_t with only obj
 bin_t *make_bin(obj_t *obj){
     bin_t *b = new bin_t();
-    b->capacity = bin_size;
     b->obj_list.push_back(*obj);
     b->occupancy = obj->size;
 
@@ -58,6 +58,7 @@ bool parse(char *infile) {
         objs[i].tag = i;
         #endif
         objs[i].size = obj_array[i].asUInt();
+        total_obj_size += obj_array[i].asUInt();
 
         // TODO: aaaaaaa struct copying is scary
         // bins.push_back(*make_bin(&objs[i]));
@@ -72,7 +73,7 @@ void check_bin(bin_t *b) {
     }
     assert(b->occupancy == sum);
     assert(0 <= b->occupancy);
-    assert(b->occupancy <= b->capacity);
+    assert(b->occupancy <= bin_size);
 }
 
 void constrain() {
@@ -81,12 +82,11 @@ void constrain() {
         bin_t *bin = &bins[i];
         bin_t *b;
         bool new_bin_flag = false;
-        if (bin->occupancy > bin->capacity) {
+        if (bin->occupancy > bin_size) {
             b = new bin_t();
-            b->capacity = bin->capacity;
             new_bin_flag = true;
         }
-        while (bin->occupancy > bin->capacity) {
+        while (bin->occupancy > bin_size) {
             size_t r = rand() % bin->obj_list.size();
             obj_t obj = bin->obj_list[r];
             bin->obj_list.erase(bin->obj_list.begin() + r);
@@ -99,13 +99,21 @@ void constrain() {
             check_bin(&bins[i]);
         }
     }
+
+    int sum_empty_space = bins.size() * bin_size - total_obj_size;
+    float avg_empty = ((float) sum_empty_space) / ((float) bins.size());
+    uint32_t poor_ind, rich_ind;
+    poor_ind = rich_ind = -1;
+    while (poor_ind < bins.size() or rich_ind < bins.size()) {
+
+    }
 }
 
 void optimize() {
     if (bins.size() <= 1) {
         return;
     }
-    size_t r = rand() % bins.size(); 
+    size_t r = rand() % bins.size();
     bin_t *bin = &bins[r];
     while (bin->obj_list.size() > 0 && bins.size() > 1) {
         obj_t obj = bin->obj_list.back();
@@ -130,7 +138,7 @@ void run() {
         bool found_fit_flag = false;
         for (size_t j = 0; j < bins.size(); j++) {
             bin_t *bin = &bins[j];
-            if (bin->occupancy + obj.size <= bin->capacity) {
+            if (bin->occupancy + obj.size <= bin_size) {
                 bin->occupancy += obj.size;
                 bin->obj_list.push_back(obj);
                 found_fit_flag = true;
@@ -148,6 +156,11 @@ void run() {
         bins[0].obj_list.push_back(obj);
         bins[0].occupancy += obj.size;
     }
+    bins[0].alias = {
+        .i1 = 0,
+        .i2 = 0,
+        .divider = 1.f,
+    };
     constrain();
     const int bins_per_pass = 30;
     const int passes = 1000;

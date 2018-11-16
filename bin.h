@@ -21,10 +21,16 @@ typedef struct obj {
 
 #endif
 
+typedef struct alias {
+	int i1;
+	int i2;
+	float divider;
+} alias_t;
+
 typedef struct bin {
   uint32_t occupancy;
-  uint32_t capacity;
   std::vector<obj_t> obj_list;
+  alias_t alias;
 } bin_t;
 
 bool parse(char *infile);
