@@ -23,7 +23,6 @@ int main(int argc, char *argv[]) {
   opterr = 0;
 
   while ((opt = getopt(argc, argv, "f:o:")) != -1) {
-    printf("%s\n", optarg);
     switch (opt) {
       case 'f':
         infile = optarg;

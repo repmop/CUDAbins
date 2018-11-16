@@ -126,7 +126,8 @@ void optimize() {
         return;
     }
     setup_rand_empty();
-    size_t r = rand_empty(); //rand() % bins.size();
+    size_t r = rand_empty();
+    // size_t r = rand() % bins.size();
     bin_t *bin = &bins[r];
 
     while (bin->obj_list.size() > 0 && bins.size() > 1) {
@@ -142,7 +143,7 @@ void optimize() {
     bins.erase(bins.begin() + r);
 
 }
-// #define BFD
+#define BFD
 void run() {
     #ifdef BFD
     sort(objs, &objs[num_objs],
@@ -174,7 +175,7 @@ void run() {
         bins[0].occupancy += obj.size;
     }
     constrain();
-    const int bins_per_pass = 10;
+    const int bins_per_pass = 1;
     const int passes = 1000;
     for (int i = 0; i < passes; i++) {
         for (int j = 0; j < bins_per_pass; j++) {
@@ -205,7 +206,8 @@ bool dump(char *outfile) {
         }
     }
     if (outfile==NULL) { //print results to stdout
-        cout << obj_data;
+        cout << "num_objs: " << num_objs << endl;
+        cout << "num_bins: " << bins.size() << endl;
     } else { //print to file
         filebuf fb;
         fb.open(outfile, ios::out);
