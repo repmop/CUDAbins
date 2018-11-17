@@ -19,16 +19,20 @@ void usage() {
 int main(int argc, char *argv[]) {
   char *infile = NULL;
   char *outfile = NULL;
+  bool bfd_flag = false;
   int opt;
   opterr = 0;
 
-  while ((opt = getopt(argc, argv, "f:o:")) != -1) {
+  while ((opt = getopt(argc, argv, "f:o:b")) != -1) {
     switch (opt) {
       case 'f':
         infile = optarg;
         break;
       case 'o':
         outfile = optarg;
+        break;
+      case 'b':
+        bfd_flag = true;
         break;
       case '?':
         if (optopt == 'f') {
@@ -57,7 +61,11 @@ int main(int argc, char *argv[]) {
    fprintf(stderr, "Failed to parse input\n");
   }
 
-  run();
+  if(!bfd_flag){
+    run();
+  } else {
+    runBFD();
+  }
 
   if (!dump(outfile)) {
       fprintf(stderr, "Failed to write output\n");

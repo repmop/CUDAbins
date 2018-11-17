@@ -101,6 +101,38 @@ void constrain() {
             check_bin(&bins[i]);
         }
     }
+
+    for(size_t ii = 0; ii < bins.size(); ii++){
+        check_bin(&bins[ii]);
+    }
+
+}
+
+// Constrain a single bin
+void constrain_bin(uint32_t idx) {
+    bin_t *bin = &bins[idx];
+
+    if (bin->occupancy > bin_size) {
+        bin_t *newbin = new bin_t();
+
+        while (bin->occupancy > bin_size) {
+            size_t r = rand() % bin->obj_list.size();
+            obj_t obj = bin->obj_list[r];
+            bin->obj_list.erase(bin->obj_list.begin() + r);
+            bin->occupancy -= obj.size;
+            newbin->occupancy += obj.size;
+            newbin->obj_list.push_back(obj);
+        }
+        check_bin(&bins[idx]);
+
+        bins.push_back(*newbin);
+        // If the new bin is also too full, fix it
+        if(newbin->occupancy > bin_size){
+            constrain_bin(bins.size() - 1);
+        }
+    }
+
+    return;
 }
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
@@ -136,6 +168,7 @@ void optimize() {
     if (bins.size() <= 1) {
         return;
     }
+
     setup_rand();
     size_t src = rand_empty();
     // size_t src = rand() % bins.size();
@@ -146,7 +179,7 @@ void optimize() {
     uint32_t src_occ = srcbin->occupancy;
     // Choose a destination bin that is not the src and has enough space
     size_t dest;
-    int retries = 5;
+    int retries = 5; // How many destinations to try
     for(int i = 0; i < retries; i++){
         // Choose a destination other than the src
         while(src == (dest = rand_full()));
@@ -157,6 +190,9 @@ void optimize() {
     }
     bin_t *destbin = &bins[dest];
 
+    check_bin(srcbin);
+    check_bin(destbin);
+
     // Put src in dest
     destbin->obj_list.insert(destbin->obj_list.end(),
                              srcbin->obj_list.begin(), srcbin->obj_list.end());
@@ -165,10 +201,18 @@ void optimize() {
     // Delete srcbin
     bins.erase(bins.begin() + src);
 
+    if(src < dest){
+        dest--;
+    }
+
+    if(bins[dest].occupancy > bin_size){
+        constrain_bin(dest);
+    }
+
 }
-#define BFD
-void run() {
-    #ifdef BFD
+
+// Fill bins using best-fit decreasing
+void runBFD() {
     sort(objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
 
@@ -189,8 +233,10 @@ void run() {
         }
     }
 
-    #else
+    return;
+}
 
+void run() {
     bins.push_back(*make_bin(&objs[0]));
     for (size_t i = 1; i < num_objs; i++) {
         obj_t obj = objs[i];
@@ -199,15 +245,17 @@ void run() {
     }
     constrain();
     const int bins_per_pass = 1;
-    const int passes = 10000;
+    const int passes = 0;
     for (int i = 0; i < passes; i++) {
         for (int j = 0; j < bins_per_pass; j++) {
             optimize();
+            for(size_t ii = 0; ii < bins.size(); ii++){
+                check_bin(&bins[ii]);
+            }
         }
-        constrain();
+        //constrain();
     }
 
-    #endif
     return;
 }
 
