@@ -237,13 +237,16 @@ void runBFD() {
 }
 
 void run() {
-    bins.push_back(*make_bin(&objs[0]));
-    for (size_t i = 1; i < num_objs; i++) {
-        obj_t obj = objs[i];
-        bins[0].obj_list.push_back(obj);
-        bins[0].occupancy += obj.size;
-    }
-    constrain();
+    // bins.push_back(*make_bin(&objs[0]));
+    // for (size_t i = 1; i < num_objs; i++) {
+    //     obj_t obj = objs[i];
+    //     bins[0].obj_list.push_back(obj);
+    //     bins[0].occupancy += obj.size;
+    // }
+    // constrain();
+
+    runBFD();
+
     const int bins_per_pass = 1;
     const int passes = 500;
     const int trials = 10;
@@ -255,8 +258,6 @@ void run() {
                 for(size_t ii = 0; ii < bins.size(); ii++){
                     check_bin(&bins[ii]);
                 }
-            }
-        }
         if (bins.size() < best_size) {
             best_bins = bins;
             best_size = bins.size();
