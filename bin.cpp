@@ -179,7 +179,7 @@ void optimize() {
     uint32_t src_occ = srcbin->occupancy;
     // Choose a destination bin that is not the src and has enough space
     size_t dest;
-    int retries = 5; // How many destinations to try
+    int retries = 1000; // How many destinations to try
     for(int i = 0; i < retries; i++){
         // Choose a destination other than the src
         while(src == (dest = rand_full()));
@@ -237,15 +237,18 @@ void runBFD() {
 }
 
 void run() {
-    bins.push_back(*make_bin(&objs[0]));
-    for (size_t i = 1; i < num_objs; i++) {
-        obj_t obj = objs[i];
-        bins[0].obj_list.push_back(obj);
-        bins[0].occupancy += obj.size;
-    }
-    constrain();
+    // bins.push_back(*make_bin(&objs[0]));
+    // for (size_t i = 1; i < num_objs; i++) {
+    //     obj_t obj = objs[i];
+    //     bins[0].obj_list.push_back(obj);
+    //     bins[0].occupancy += obj.size;
+    // }
+    // constrain();
+
+    runBFD();
+
     const int bins_per_pass = 1;
-    const int passes = 0;
+    const int passes = 500;
     for (int i = 0; i < passes; i++) {
         for (int j = 0; j < bins_per_pass; j++) {
             optimize();
