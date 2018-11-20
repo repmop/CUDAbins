@@ -92,9 +92,9 @@ kernel(bin_t *bins, int size) {
         }
         if (!found_fit_flag) {
             // bins.push_back(*make_bin(&obj));
-            bin_t *b = new bin_t;
-            b->occupancy = obj.size;
-            bins[size] = *b;
+            bin_t b;
+            b.occupancy = obj.size;
+            bins[size] = b;
             size++;
         }
     }
@@ -108,8 +108,6 @@ void runBFD(){
 __host__
 void run() {
     device_vector<bin_t> bins;
-    // std::sort(host_objs, &host_objs[host_num_objs],
-    //     [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
     bins = host_bins;
     cudaMemcpy(&host_objs, &objs, host_num_objs * sizeof(obj_t), cudaMemcpyHostToDevice);
     cudaMemcpy(&host_num_objs, &num_objs, sizeof(uint32_t), cudaMemcpyHostToDevice);
