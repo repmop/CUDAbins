@@ -144,24 +144,35 @@ void setup_rand(){
     float sum_empty_space = (float)(bins.size() * bin_size - total_obj_size);
     float ecdf = 0.f;
     float fcdf = 0.f;
-    for(uint32_t i = 0; i < bins.size(); i++){
+    size_t i;
+    for(i = 0; i < bins.size() - 1; i++){
         ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
         ecdfs[i] = ecdf;
         fcdf += ((float) bins[i].occupancy) / total_obj_size;
         fcdfs[i] = fcdf;
     }
+    // Make the final value greater than 1 so upper_bound doesn't break
+    ecdfs[i] = 2.f;
+    fcdfs[i] = 2.f;
 }
 
 // Select a random bin weighted in favor of empty bins. Uses data structures
 //  generated in setup_rand, which may be stale.
 uint32_t rand_empty(){
-    return upper_bound(ecdfs.begin(), ecdfs.end(), ((float)rand()) / RAND_MAX) -ecdfs.begin();
+    size_t ret = upper_bound(ecdfs.begin(), ecdfs.end(), ((float)rand()) / RAND_MAX) -
+             ecdfs.begin();
+    assert(0 <= ret);
+    assert(ret < bins.size());
+    return ret;
 }
 
 // Select a random bin weighted in favor of full bins.
 uint32_t rand_full(){
-    return upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
+    size_t ret = upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
              fcdfs.begin();
+    assert(0 <= ret);
+    assert(ret < bins.size());
+    return ret;
 }
 
 void optimize() {
@@ -236,6 +247,25 @@ void runBFD() {
     return;
 }
 
+// Fill bins using next-fit
+void runNF() {
+    bins.clear();
+    bin_t *b = new bin_t();
+
+    for (size_t i = 0; i < num_objs; i++) {
+        obj_t *o = &objs[i];
+        if(b->occupancy + o->size > bin_size){
+            bins.push_back(*b);
+            b = new bin_t();
+        }
+        b->occupancy += o->size;
+        b->obj_list.push_back(*o);
+    }
+    bins.push_back(*b);
+
+    return;
+}
+
 void run() {
     // bins.push_back(*make_bin(&objs[0]));
     // for (size_t i = 1; i < num_objs; i++) {
@@ -245,11 +275,11 @@ void run() {
     // }
     // constrain();
 
-    runBFD();
-    srand(1234123413);
+    runNF();
+    srand(123412341);
     const int bins_per_pass = 1;
-    const int passes = 500;
-    const int trials = 100;
+    const int passes = 1000;
+    const int trials = 500;
     uint32_t best_size = UINT32_MAX;
     vector<bin_t> seed = bins;
     for (int trial = 0; trial < trials; trial++) {
@@ -261,14 +291,15 @@ void run() {
                 }
             }
         }
+
         if (bins.size() < best_size) {
+            printf("Size %d\n", (int)bins.size());
             best_bins = bins;
             best_size = bins.size();
         }
         bins = seed;
     }
     bins = best_bins;
-
 
     return;
 }

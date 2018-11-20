@@ -22,9 +22,9 @@ typedef struct obj {
 #endif
 
 typedef struct alias {
-	int i1;
-	int i2;
-	float divider;
+    int i1;
+    int i2;
+    float divider;
 } alias_t;
 
 typedef struct bin {
@@ -37,6 +37,7 @@ bool parse(char *infile);
 
 void run();
 void runBFD();
+void runNF();
 
 bool dump(char *outfile);
 
