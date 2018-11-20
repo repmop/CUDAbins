@@ -179,7 +179,7 @@ void optimize() {
     uint32_t src_occ = srcbin->occupancy;
     // Choose a destination bin that is not the src and has enough space
     size_t dest;
-    const int retries = 100; // How many destinations to try
+    const int retries = 1000; // How many destinations to try
     for(int i = 0; i < retries; i++){
         // Choose a destination other than the src
         while(src == (dest = rand_full()));
@@ -246,11 +246,12 @@ void run() {
     // constrain();
 
     runBFD();
-
+    srand(1234123413);
     const int bins_per_pass = 1;
     const int passes = 500;
-    const int trials = 10;
+    const int trials = 100;
     uint32_t best_size = UINT32_MAX;
+    vector<bin_t> seed = bins;
     for (int trial = 0; trial < trials; trial++) {
         for (int i = 0; i < passes; i++) {
             for (int j = 0; j < bins_per_pass; j++) {
@@ -258,11 +259,16 @@ void run() {
                 for(size_t ii = 0; ii < bins.size(); ii++){
                     check_bin(&bins[ii]);
                 }
+            }
+        }
         if (bins.size() < best_size) {
             best_bins = bins;
             best_size = bins.size();
         }
+        bins = seed;
     }
+    bins = best_bins;
+
 
     return;
 }
