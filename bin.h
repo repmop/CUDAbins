@@ -36,6 +36,7 @@ typedef struct bin {
 bool parse(char *infile);
 
 void run();
+void runBFD();
 
 bool dump(char *outfile);
 

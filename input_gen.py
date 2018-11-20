@@ -9,7 +9,10 @@ def main():
                         help="Number of objects", required=True)
     parser.add_argument("-s", dest="bin_size", type=int,
                         help="Bin size", required=True)
-    parser.add_argument("-m","--mode", dest="mode", choices=["uniform"],
+    parser.add_argument("-r", nargs=2, metavar=("lo","hi"), type=int,
+                        help="Range of obj size", required=False)
+    parser.add_argument("-m","--mode", dest="mode",
+                        choices=["uniform"],
                         default="uniform", help="Mode for input generation")
     args = parser.parse_args()
 
@@ -19,7 +22,11 @@ def main():
 
     if(args.mode == "uniform"):
         for i in range(num_objs):
-            objs[i] = random.randint(1, bin_size)
+            if(args.r):
+                objs[i] = random.randint(max(1,args.r[0]),
+                                         min(args.r[1],bin_size))
+            else:
+                objs[i] = random.randint(1, bin_size)
 
     inputs = {}
     inputs["num_objs"] = num_objs
