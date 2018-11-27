@@ -17,7 +17,7 @@ using namespace std;
 using namespace thrust;
 
 #define BFD
-
+#define SCALE 2
 
 typedef struct obj {
     uint32_t size;
@@ -29,11 +29,40 @@ typedef struct alias {
     float divider;
 } alias_t;
 
+typedef struct ghetto_vec {
+    __device__
+    void push_back(obj_t obj) {
+        if (num_entries + 1 >= maxlen) {
+            obj_t *old = arr;
+            arr = new obj_t[maxlen * SCALE];
+            for (int i = 0; i < num_entries; i++) {
+                arr[i] = old[i];
+            }
+            delete[] old;
+        }
+        arr[num_entries++] = obj;
+    }
+    __device__
+    int size() {
+        return num_entries;
+    }
+    int maxlen;
+    int num_entries;
+    obj_t *arr;
+} ghetto_vec_t;
+
+typedef struct dev_bin {
+  uint32_t occupancy;
+  ghetto_vec obj_list;
+  alias_t alias;
+} dev_bin_t;
+
 typedef struct bin {
   uint32_t occupancy;
+  host_vector<obj_t> obj_list;
   alias_t alias;
+  __host__ ~bin() {}
 } bin_t;
-
 
 __constant__ uint32_t total_obj_size = 0; //pseudo-constant
 __constant__ uint32_t bin_size;
@@ -45,9 +74,9 @@ host_vector<bin_t> host_bins;
 uint32_t host_num_objs;
 uint32_t host_bin_size;
 uint32_t host_total_obj_size = 0; //pseudo-constant
+uint32_t host_num_bins;
 
-
-host_vector<bin_t> bins_out;
+bin_t *bins_out;
 
 __host__
 bool parse(char *infile) {
@@ -69,35 +98,51 @@ bool parse(char *infile) {
         #endif
         host_objs[i].size = obj_array[i].asUInt();
         host_total_obj_size += obj_array[i].asUInt();
-
     }
     return true;
 }
 
+__host__
+int calculate_maxsize() {
+    const float slip_ratio = .5f;
+    int total_size = 0;
+    for (size_t i = 0; i < host_num_objs; i++) {
+        total_size += host_objs[i].size;
+    }
+    return (int) ((float) total_size / (slip_ratio * host_bin_size));
+}
+
 __global__ void
-kernel(bin_t *bins, int size) {
+kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
+    int size = 0;
     thrust::sort(cuda::par, objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
     for (size_t i = 0; i < num_objs; i++) {
         obj_t obj = objs[i];
         bool found_fit_flag = false;
         for (size_t j = 0; j < size; j++) {
-            bin_t *bin = &bins[j];
+            dev_bin_t *bin = &bins[j];
             if (bin->occupancy + obj.size <= bin_size) {
                 bin->occupancy += obj.size;
-                // bin->obj_list.push_back(obj);
+                bin->obj_list.push_back(obj);
                 found_fit_flag = true;
                 break;
             }
         }
         if (!found_fit_flag) {
-            // bins.push_back(*make_bin(&obj));
-            bin_t b;
+            dev_bin_t b;
             b.occupancy = obj.size;
+            if (size >= maxsize - 1) {
+                *dev_retval_pt = -1;
+                return;
+            }
+            b.obj_list.num_entries = 0;
+            b.obj_list.push_back(obj);
             bins[size] = b;
             size++;
         }
     }
+    *dev_retval_pt = size;
     return;
 }
 
@@ -105,24 +150,49 @@ void runBFD(){
     return;
 }
 
+
 __host__
 void run() {
-    device_vector<bin_t> bins;
-    bins = host_bins;
+    dev_bin_t *bins;
+    int maxsize = calculate_maxsize();
+    int *dev_retval_pt, host_retval;
     cudaMemcpy(&host_objs, &objs, host_num_objs * sizeof(obj_t), cudaMemcpyHostToDevice);
     cudaMemcpy(&host_num_objs, &num_objs, sizeof(uint32_t), cudaMemcpyHostToDevice);
     cudaMemcpy(&host_bin_size, &bin_size, sizeof(uint32_t), cudaMemcpyHostToDevice);
     cudaMemcpy(&host_total_obj_size, &total_obj_size, sizeof(uint32_t), cudaMemcpyHostToDevice);
-    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), bins.size());
+    cudaMalloc(&dev_retval_pt, sizeof(int));
+    cudaMalloc(&bins, maxsize * sizeof(dev_bin_t));
+    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt);
     cudaThreadSynchronize();
-    bins_out = bins;
+
+    cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
+    if (host_retval < 0) {
+        cout << "CUDA kernel failed to pack bins\n";
+    }
+    host_num_bins = host_retval;
+    bin_t *bins_out = new bin_t[host_num_bins];
+    for (size_t i = 0; i < host_num_bins; i++) {
+        int objs_in_bin;
+        cudaMemcpy(&objs_in_bin, &bins[i].obj_list.num_entries,
+                   sizeof(int), cudaMemcpyDeviceToHost);
+        bin_t *b = new bin_t;
+        b->obj_list.resize(objs_in_bin);
+
+        cudaMemcpy(&b->obj_list[0], &bins[i].obj_list.arr,
+                   objs_in_bin * sizeof(obj_t), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&b->occupancy, &bins[i].occupancy,
+                   sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&b->alias, &bins[i].alias,
+                   sizeof(alias_t), cudaMemcpyDeviceToHost);
+        bins_out[i] = *b;
+    }
 }
 __host__
 bool dump(char *outfile) {
     Json::Value obj_data;
     obj_data["bin_size"] = host_bin_size;
     obj_data["num_objs"] = host_num_objs;
-    obj_data["num_bins"] = bins_out.size();
+    obj_data["num_bins"] = host_num_bins;
     obj_data["objs"] = Json::Value(Json::arrayValue);
     obj_data["bins"] = Json::Value(Json::arrayValue);
     for(uint32_t i = 0; i < host_num_objs; i++){
@@ -130,7 +200,7 @@ bool dump(char *outfile) {
     }
     if (outfile==NULL) { //print results to stdout
         cout << "num_objs: " << host_num_objs << endl;
-        cout << "num_bins: " << bins_out.size() << endl;
+        cout << "num_bins: " << host_num_bins << endl;
     } else { //print to file
         filebuf fb;
         fb.open(outfile, ios::out);
