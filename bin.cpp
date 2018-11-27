@@ -15,7 +15,9 @@ obj_t *objs;
 vector<bin_t> bins;
 vector<bin_t> best_bins;
 vector<float> ecdfs; // CDF of empty space
-vector<float> fcdfs; // CDF of full space
+//vector<float> fcdfs; // CDF of full space
+vector<uint32_t> fcdfs; // CDF of full space
+uint32_t fcdf_max;
 alias *alias_table;
 
 // Allocate and populate a bin_t with the objs in obj_list
@@ -151,36 +153,87 @@ void setup_rand(){
         fcdf += ((float) bins[i].occupancy) / total_obj_size;
         fcdfs[i] = fcdf;
     }
-    // Make the final value greater than 1 so upper_bound doesn't break
+    // Make the final value (bins.size() - 1) greater than 1
+    //  so upper_bound doesn't break
     ecdfs[i] = 2.f;
     fcdfs[i] = 2.f;
+}
+
+// Recalculate data structures used by rand_empty on current bins.
+void setup_rand_empty(){
+    ecdfs.resize(bins.size());
+
+    float sum_empty_space = (float)(bins.size() * bin_size - total_obj_size);
+    float ecdf = 0.f;
+    size_t i;
+    for(i = 0; i < bins.size() - 1; i++){
+        ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
+        ecdfs[i] = ecdf;
+    }
+    // Make the final value greater than 1 so upper_bound doesn't break
+    ecdfs[i] = 2.f;
+}
+
+// Recalculate data structures used by rand_full on current bins. Assign zero
+//  probability to bins that can't fit src_occ;
+void setup_rand_full(uint32_t src_occ, uint32_t src){
+    fcdfs.resize(bins.size());
+
+    uint32_t max_occ = bin_size - src_occ;
+
+    uint32_t fcdf = 0;
+    size_t i;
+    for(i = 0; i < bins.size(); i++){
+        // If a bin is too full, give it 0 probability
+        if(bins[i].occupancy <= max_occ && i != src){
+            fcdf += bins[i].occupancy;
+        }
+
+        fcdfs[i] = fcdf;
+    }
+
+    fcdf_max = fcdf;
 }
 
 // Select a random bin weighted in favor of empty bins. Uses data structures
 //  generated in setup_rand, which may be stale.
 uint32_t rand_empty(){
-    size_t ret = upper_bound(ecdfs.begin(), ecdfs.end(), ((float)rand()) / RAND_MAX) -
-             ecdfs.begin();
+    size_t ret = upper_bound(ecdfs.begin(), ecdfs.end(),
+                             ((float)rand()) / RAND_MAX) - ecdfs.begin();
     assert(0 <= ret);
     assert(ret < bins.size());
     return ret;
 }
 
 // Select a random bin weighted in favor of full bins.
+// uint32_t rand_full(){
+//     size_t ret = upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
+//              fcdfs.begin();
+//     assert(0 <= ret);
+//     assert(ret < bins.size());
+//     return ret;
+// }
 uint32_t rand_full(){
-    size_t ret = upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
-             fcdfs.begin();
+    size_t ret;
+    if(fcdf_max == 0) {
+        ret = rand() % bins.size();
+    } else {
+        ret = upper_bound(fcdfs.begin(), fcdfs.end(), rand() % fcdf_max)
+                      - fcdfs.begin();
+    }
     assert(0 <= ret);
     assert(ret < bins.size());
     return ret;
 }
 
+int overflow_count = 0;
+int trial_count = 0;
 void optimize() {
     if (bins.size() <= 1) {
         return;
     }
 
-    setup_rand();
+    setup_rand_empty();
     size_t src = rand_empty();
     // size_t src = rand() % bins.size();
     bin_t *srcbin = &bins[src];
@@ -190,7 +243,8 @@ void optimize() {
     uint32_t src_occ = srcbin->occupancy;
     // Choose a destination bin that is not the src and has enough space
     size_t dest;
-    const int retries = 1000; // How many destinations to try
+    setup_rand_full(src_occ, src);
+    const int retries = 1; // How many destinations to try
     for(int i = 0; i < retries; i++){
         // Choose a destination other than the src
         while(src == (dest = rand_full()));
@@ -216,7 +270,9 @@ void optimize() {
         dest--;
     }
 
+    trial_count++;
     if(bins[dest].occupancy > bin_size){
+        overflow_count++;
         constrain_bin(dest);
     }
 
@@ -279,7 +335,7 @@ void run() {
     srand(123412341);
     const int bins_per_pass = 1;
     const int passes = 1000;
-    const int trials = 500;
+    const int trials = 50;
     uint32_t best_size = UINT32_MAX;
     vector<bin_t> seed = bins;
     for (int trial = 0; trial < trials; trial++) {
@@ -300,6 +356,8 @@ void run() {
         bins = seed;
     }
     bins = best_bins;
+
+    printf("Overflow: %d / %d\n", overflow_count, trial_count);
 
     return;
 }
