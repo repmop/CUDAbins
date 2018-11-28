@@ -14,7 +14,7 @@ ARCH=$(shell uname | sed -e 's/-.*//g')
 
 OBJDIR=objs
 CXX=g++ -m64 -std=c++11
-CXXFLAGS=-O0 -Wall -g -gdwarf-2
+CXXFLAGS=-O3 -Wall -g -gdwarf-2
 ifeq ($(ARCH), Darwin)
 # Building on mac
 LDFLAGS=-L/usr/local/depot/cuda-8.0/lib/ -lcudart
