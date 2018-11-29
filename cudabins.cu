@@ -116,6 +116,15 @@ int calculate_maxsize() {
     }
     return (int) ((float) total_size / (slip_ratio * host_bin_size));
 }
+__device__
+void check_bin(dev_bin_t *b, int bin_size) {
+    uint32_t sum = 0;
+    for (int i = 0; i < b->obj_list.num_entries; i++) {
+        sum += b->obj_list.arr[i].size;
+    }
+    assert(b->occupancy == sum);
+    assert(b->occupancy <= bin_size);
+}
 
 __global__ void
 kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
@@ -123,9 +132,9 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
     int num_objs = params.num_objs;
     obj_t *objs = params.objs;
     int bin_size = params.bin_size;
-    int total_obj_size = params.total_obj_size;
-    printf("bins: %p, maxsize: %i, dev_retval_pt: %p\n",bins,maxsize,dev_retval_pt);
-    printf("num_objs: %i, objs: %p, bin_size: %i, total_obj_size: %i\n",num_objs,objs,bin_size,total_obj_size);
+    // int total_obj_size = params.total_obj_size;
+    // printf("bins: %p, maxsize: %i, dev_retval_pt: %p\n",bins,maxsize,dev_retval_pt);
+    // printf("num_objs: %i, objs: %p, bin_size: %i, total_obj_size: %i\n",num_objs,objs,bin_size,total_obj_size);
     thrust::sort(cuda::par, objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
     for (size_t i = 0; i < num_objs; i++) {
@@ -139,6 +148,7 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
                 found_fit_flag = true;
                 break;
             }
+            check_bin(bin, bin_size);
         }
         if (!found_fit_flag) {
             dev_bin_t b;
@@ -147,11 +157,16 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
                 *dev_retval_pt = -1;
                 return;
             }
+            b.obj_list.maxlen = 10;
+            b.obj_list.arr = new obj_t[b.obj_list.maxlen];
             b.obj_list.num_entries = 0;
             b.obj_list.push_back(obj);
             bins[size] = b;
             size++;
         }
+    }
+    for (size_t j = 0; j < size; j++) {
+        check_bin(&bins[j], bin_size);
     }
     printf("size: %i\n", size);
     *dev_retval_pt = size;
