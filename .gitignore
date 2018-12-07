@@ -6,3 +6,4 @@ bins
 
 *.txt
 !inputs/*.txt
+Makefile
