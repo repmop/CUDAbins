@@ -136,21 +136,25 @@ void host_check_bin(bin_t *b, size_t bin_size) {
 }
 
 __global__ void
-kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
-       obj_t *obj_out, size_t *idx_out) {
-    int size = 0;
+kernelBFD(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
+          obj_t *obj_out, size_t *idx_out) {
+
+    int num_bins = 0;
     int num_objs = params.num_objs;
     obj_t *objs = params.objs;
     int bin_size = params.bin_size;
-    // int total_obj_size = params.total_obj_size;
-    // printf("bins: %p, maxsize: %i, dev_retval_pt: %p\n",bins,maxsize,dev_retval_pt);
-    // printf("num_objs: %i, objs: %p, bin_size: %i, total_obj_size: %i\n",num_objs,objs,bin_size,total_obj_size);
+
+    // Sort objects decreasing
     thrust::sort(cuda::par, objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
+
+    // Put each object in the first bin it fits into
     for (size_t i = 0; i < num_objs; i++) {
         obj_t obj = objs[i];
+
+        // Scan through existing bins for space
         bool found_fit_flag = false;
-        for (size_t j = 0; j < size; j++) {
+        for (size_t j = 0; j < num_bins; j++) {
             dev_bin_t *bin = &bins[j];
             if (bin->occupancy + obj.size <= bin_size) {
                 bin->occupancy += obj.size;
@@ -160,10 +164,12 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
             }
             check_bin(bin, bin_size);
         }
+
+        // If you don't find any, make a new bin
         if (!found_fit_flag) {
             dev_bin_t b;
             b.occupancy = obj.size;
-            if (size >= maxsize - 1) {
+            if (num_bins >= maxsize - 1) {
                 *dev_retval_pt = -1;
                 return;
             }
@@ -171,15 +177,16 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
             b.obj_list.arr = new obj_t[b.obj_list.maxlen];
             b.obj_list.num_entries = 0;
             b.obj_list.push_back(obj);
-            bins[size] = b;
-            size++;
+            bins[num_bins] = b;
+            num_bins++;
         }
     }
 
-    // Copy objects to serial output
+    // Copy objects in order to obj_out
+    // idx_out holds the indices into obj_out where each bin starts
     size_t out_idx = 0;
     size_t bi;
-    for(bi = 0; bi < size; bi++){
+    for(bi = 0; bi < num_bins; bi++){
       idx_out[bi] = out_idx;
       for(size_t oi = 0; oi < bins[bi].obj_list.num_entries; oi++){
         obj_out[out_idx] = bins[bi].obj_list.arr[oi];
@@ -188,19 +195,14 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
     }
     idx_out[bi] = out_idx;
 
-    for (size_t j = 0; j < size; j++) {
+    for (size_t j = 0; j < num_bins; j++) {
         check_bin(&bins[j], bin_size);
     }
-    printf("Num bins: %i\n", size);
-    *dev_retval_pt = size;
 
-    // printf("%p %i %i %i %i \n", bins[0].obj_list.arr,
-    //        bins[0].obj_list.num_entries, bins[0].occupancy,
-    //        bins[0].obj_list.arr[0].size, bins[0].obj_list.arr[1].size);
-    return;
-}
+    // Return the number of bins
+    *dev_retval_pt = num_bins;
+    printf("Num bins: %i\n", num_bins);
 
-void runBFD(){
     return;
 }
 
@@ -216,30 +218,39 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 __host__
-void run() {
+void runBFD() {
     dev_bin_t *bins;
     obj_t *obj_out;
     size_t *idx_out;
+
+    // Calculate a high water mark for number of bins used
     int maxsize = calculate_maxsize();
     cout << "Max number of bins " << maxsize << std::endl;
+
+    // Allocate space on device
     int *dev_retval_pt, host_retval;
-    cudaParams p;
     gpuErrchk(cudaMalloc(&dev_retval_pt, sizeof(int)));
     gpuErrchk(cudaMalloc(&bins, maxsize * sizeof(dev_bin_t)));
     gpuErrchk(cudaMalloc(&objs, host_num_objs * sizeof(obj_t)));
     gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj_t)));
     gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
-    gpuErrchk(cudaMemcpy(objs, host_objs, host_num_objs * sizeof(obj_t), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(objs, host_objs, host_num_objs * sizeof(obj_t),
+                         cudaMemcpyHostToDevice));
+
+    // Assign parameters for device
+    cudaParams p;
     p.objs = objs;
     p.num_objs = host_num_objs;
     p.bin_size = host_bin_size;
     p.total_obj_size = host_total_obj_size;
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
-    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
-                    obj_out, idx_out);
+    // Run BFD
+    kernelBFD<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
+                       obj_out, idx_out);
     cudaThreadSynchronize();
 
+    // Copy back number of bins
     cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
     if (host_retval < 0) {
         cout << "CUDA kernel failed to pack bins\n";
@@ -255,6 +266,66 @@ void run() {
     cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj_t),
                cudaMemcpyDeviceToHost);
 
+    // Create a vector with these objects
+    for (size_t bi = 0; bi < host_num_bins; bi++) {
+        bin_t *b = new bin_t;
+        for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
+          b->obj_list.push_back(host_objs[oi]);
+        }
+        bins_out[bi] = *b;
+    }
+}
+
+__host__
+void run() {
+    dev_bin_t *bins;
+    obj_t *obj_out;
+    size_t *idx_out;
+
+    // Calculate a high water mark for number of bins used
+    int maxsize = calculate_maxsize();
+    cout << "Max number of bins " << maxsize << std::endl;
+
+    // Allocate space on device
+    int *dev_retval_pt, host_retval;
+    gpuErrchk(cudaMalloc(&dev_retval_pt, sizeof(int)));
+    gpuErrchk(cudaMalloc(&bins, maxsize * sizeof(dev_bin_t)));
+    gpuErrchk(cudaMalloc(&objs, host_num_objs * sizeof(obj_t)));
+    gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj_t)));
+    gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
+    gpuErrchk(cudaMemcpy(objs, host_objs, host_num_objs * sizeof(obj_t),
+                         cudaMemcpyHostToDevice));
+
+    // Assign parameters for device
+    cudaParams p;
+    p.objs = objs;
+    p.num_objs = host_num_objs;
+    p.bin_size = host_bin_size;
+    p.total_obj_size = host_total_obj_size;
+    gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
+
+    // Run BFD
+    kernelBFD<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
+                       obj_out, idx_out);
+    cudaThreadSynchronize();
+
+    // Copy back number of bins
+    cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
+    if (host_retval < 0) {
+        cout << "CUDA kernel failed to pack bins\n";
+    }
+    host_num_bins = host_retval;
+    bins_out = new bin_t[host_num_bins];
+
+    // Copy the representation of objs in bins to host
+    size_t *host_idxs = new size_t[host_num_bins+1];
+    obj_t *host_objs = new obj_t[host_num_objs];
+    cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj_t),
+               cudaMemcpyDeviceToHost);
+
+    // Create a vector with these objects
     for (size_t bi = 0; bi < host_num_bins; bi++) {
         bin_t *b = new bin_t;
         for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
