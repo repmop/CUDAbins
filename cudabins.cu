@@ -16,7 +16,6 @@
 using namespace std;
 using namespace thrust;
 
-#define BFD
 #define SCALE 2
 
 typedef struct obj {
@@ -116,6 +115,7 @@ int calculate_maxsize() {
     }
     return (int) ((float) total_size / (slip_ratio * host_bin_size));
 }
+
 __device__
 void check_bin(dev_bin_t *b, int bin_size) {
     uint32_t sum = 0;
@@ -124,11 +124,20 @@ void check_bin(dev_bin_t *b, int bin_size) {
     }
     assert(b->occupancy == sum);
     assert(b->occupancy <= bin_size);
-    assert(b->obj_list.num_entries < b->obj_list.maxlen);
+}
+
+void host_check_bin(bin_t *b, size_t bin_size) {
+    uint32_t sum = 0;
+    for (size_t i = 0; i < b->obj_list.size(); i++) {
+        sum += b->obj_list[i].size;
+    }
+    assert(b->occupancy == sum);
+    assert(b->occupancy <= bin_size);
 }
 
 __global__ void
-kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
+kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
+       obj_t *obj_out, size_t *idx_out) {
     int size = 0;
     int num_objs = params.num_objs;
     obj_t *objs = params.objs;
@@ -166,15 +175,28 @@ kernel(dev_bin_t *bins, int maxsize, int *dev_retval_pt) {
             size++;
         }
     }
+
+    // Copy objects to serial output
+    size_t out_idx = 0;
+    size_t bi;
+    for(bi = 0; bi < size; bi++){
+      idx_out[bi] = out_idx;
+      for(size_t oi = 0; oi < bins[bi].obj_list.num_entries; oi++){
+        obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+        out_idx++;
+      }
+    }
+    idx_out[bi] = out_idx;
+
     for (size_t j = 0; j < size; j++) {
         check_bin(&bins[j], bin_size);
     }
-    printf("0: \n");
-    printf("occ: %i\n", bins[0].occupancy);
-    for (size_t i = 0; i < bins[0].obj_list.num_entries; i++) {
-        printf("bins[0].obj_list.arr[i].size: %i\n", bins[0].obj_list.arr[i].size);
-    }
+    printf("Num bins: %i\n", size);
     *dev_retval_pt = size;
+
+    // printf("%p %i %i %i %i \n", bins[0].obj_list.arr,
+    //        bins[0].obj_list.num_entries, bins[0].occupancy,
+    //        bins[0].obj_list.arr[0].size, bins[0].obj_list.arr[1].size);
     return;
 }
 
@@ -196,12 +218,17 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 __host__
 void run() {
     dev_bin_t *bins;
+    obj_t *obj_out;
+    size_t *idx_out;
     int maxsize = calculate_maxsize();
+    cout << "Max number of bins " << maxsize << std::endl;
     int *dev_retval_pt, host_retval;
     cudaParams p;
     gpuErrchk(cudaMalloc(&dev_retval_pt, sizeof(int)));
     gpuErrchk(cudaMalloc(&bins, maxsize * sizeof(dev_bin_t)));
     gpuErrchk(cudaMalloc(&objs, host_num_objs * sizeof(obj_t)));
+    gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj_t)));
+    gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
     gpuErrchk(cudaMemcpy(objs, host_objs, host_num_objs * sizeof(obj_t), cudaMemcpyHostToDevice));
     p.objs = objs;
     p.num_objs = host_num_objs;
@@ -209,7 +236,8 @@ void run() {
     p.total_obj_size = host_total_obj_size;
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
-    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt);
+    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
+                    obj_out, idx_out);
     cudaThreadSynchronize();
 
     cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
@@ -218,24 +246,24 @@ void run() {
     }
     host_num_bins = host_retval;
     bins_out = new bin_t[host_num_bins];
-    for (size_t i = 0; i < host_num_bins; i++) {
-        int objs_in_bin;
-        cudaMemcpy(&objs_in_bin, &bins[i].obj_list.num_entries,
-                   sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Copy the representation of objs in bins to host
+    size_t *host_idxs = new size_t[host_num_bins+1];
+    obj_t *host_objs = new obj_t[host_num_objs];
+    cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj_t),
+               cudaMemcpyDeviceToHost);
+
+    for (size_t bi = 0; bi < host_num_bins; bi++) {
         bin_t *b = new bin_t;
-        b->obj_list.resize(objs_in_bin);
-        uint64_t addr;
-        cudaMemcpy(&addr, &bins[i].obj_list.arr,
-                   sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&b->obj_list[0], addr,
-                   objs_in_bin * sizeof(obj_t), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&b->occupancy, &bins[i].occupancy,
-                   sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&b->alias, &bins[i].alias,
-                   sizeof(alias_t), cudaMemcpyDeviceToHost);
-        bins_out[i] = *b;
+        for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
+          b->obj_list.push_back(host_objs[oi]);
+        }
+        bins_out[bi] = *b;
     }
 }
+
 __host__
 bool dump(char *outfile) {
     Json::Value obj_data;
