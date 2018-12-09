@@ -90,7 +90,6 @@ typedef struct cudaParams {
     obj_t *objs;
 } cudaParams;
 
-obj_t *objs;
 __constant__ cudaParams params;
 
 obj_t *host_objs;
@@ -154,6 +153,40 @@ void host_check_bin(bin_t *b, size_t bin_size) {
     assert(b->occupancy == sum);
     assert(b->occupancy <= bin_size);
 }
+
+
+// Fill bins using next-fit
+__device__
+void runNF (dev_bin_t *bins, obj_t *objs, int num_objs, int bin_size,
+            int maxsize, int *num_bins) {
+    //bins.clear();
+
+    // Start by allocating first bin
+    size_t bi = 0; // Index of last valid bin
+    dev_bin_t *b = &(bins[bi]);
+    init_dev_bin(b, 10);
+
+    for (size_t oi = 0; oi < num_objs; oi++) {
+        obj_t *o = &objs[oi];
+        if(b->occupancy + o->size > bin_size){
+            // Move to a new bin (space is already allocated)
+            bi++;
+            if (bi >= maxsize) {
+                *num_bins = -1;
+                return;
+            }
+
+            b = &(bins[bi]);
+            init_dev_bin(b, 10);
+        }
+        add_obj(b, o);
+    }
+
+    *num_bins = bi + 1;
+
+    return;
+}
+
 
 __global__ void
 kernelBFD(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
@@ -226,6 +259,42 @@ kernelBFD(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
     return;
 }
 
+__global__ void
+kernelWalkPack(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
+               obj_t *obj_out, size_t *idx_out) {
+
+    int num_bins;
+    int num_objs = params.num_objs;
+    obj_t *objs = params.objs;
+    int bin_size = params.bin_size;
+
+    // Pre-order
+    runNF(bins, objs, num_objs, bin_size, maxsize, &num_bins);
+
+    // Copy objects in order to obj_out
+    // idx_out holds the indices into obj_out where each bin starts
+    size_t out_idx = 0;
+    size_t bi;
+    for(bi = 0; bi < num_bins; bi++){
+      idx_out[bi] = out_idx;
+      for(size_t oi = 0; oi < bins[bi].obj_list.num_entries; oi++){
+        obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+        out_idx++;
+      }
+    }
+    idx_out[bi] = out_idx;
+
+    for (size_t j = 0; j < num_bins; j++) {
+        check_bin(&bins[j], bin_size);
+    }
+
+    // Return the number of bins
+    *dev_retval_pt = num_bins;
+    printf("Num bins: %i\n", num_bins);
+
+    return;
+}
+
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -239,7 +308,11 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 __host__
 void runBFD() {
+    // Inputs
     dev_bin_t *bins;
+    obj_t *objs;
+
+    // Outputs
     obj_t *obj_out;
     size_t *idx_out;
 
@@ -296,41 +369,13 @@ void runBFD() {
     }
 }
 
-// Fill bins using next-fit
-__device__
-void runNF (dev_bin_t *bins, obj_t *objs, int num_objs, int bin_size,
-            int maxsize, int *num_bins) {
-    //bins.clear();
-
-    // Start by allocating first bin
-    size_t bi = 0; // Index of last valid bin
-    dev_bin_t *b = &(bins[bi]);
-    init_dev_bin(b, 10);
-
-    for (size_t oi = 0; oi < num_objs; oi++) {
-        obj_t *o = &objs[oi];
-        if(b->occupancy + o->size > bin_size){
-            // Move to a new bin (space is already allocated)
-            bi++;
-            if (bi >= maxsize) {
-                *num_bins = -1;
-                return;
-            }
-
-            b = &(bins[bi]);
-            init_dev_bin(b, 10);
-        }
-        add_obj(b, o);
-    }
-
-    *num_bins = bi + 1;
-
-    return;
-}
-
 __host__
 void run() {
+    // Inputs
     dev_bin_t *bins;
+    obj_t *objs;
+
+    // Outputs
     obj_t *obj_out;
     size_t *idx_out;
 
@@ -357,8 +402,8 @@ void run() {
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
     // Run BFD
-    kernelBFD<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
-                       obj_out, idx_out);
+    kernelWalkPack<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
+                            obj_out, idx_out);
     cudaThreadSynchronize();
 
     // Copy back number of bins
