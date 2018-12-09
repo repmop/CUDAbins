@@ -237,16 +237,7 @@ void runBFD() {
 }
 
 void run() {
-    // bins.push_back(*make_bin(&objs[0]));
-    // for (size_t i = 1; i < num_objs; i++) {
-    //     obj_t obj = objs[i];
-    //     bins[0].obj_list.push_back(obj);
-    //     bins[0].occupancy += obj.size;
-    // }
-    // constrain();
-
     runBFD();
-    srand(1234123413);
     const int bins_per_pass = 1;
     const int passes = 500;
     const int trials = 100;
