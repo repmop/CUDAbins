@@ -18,40 +18,8 @@
 using namespace std;
 using namespace thrust;
 
-
-typedef struct obj {
-    uint32_t size;
-}obj;
-
-struct alias {
-    int i1;
-    int i2;
-    float divider;
-};
-
-
-struct dev_bin {
-  uint32_t occupancy;
-  ghetto_vec<obj> obj_list;
-  alias alias;
-};
-
-struct bin {
-  uint32_t occupancy;
-  host_vector<obj> obj_list;
-  alias alias;
-  __host__ ~bin() {}
-};
-
-struct cudaParams {
-    uint32_t total_obj_size;
-    uint32_t bin_size;
-    uint32_t num_objs;
-    obj *objs;
-};
-
-obj *objs;
 __constant__ cudaParams params;
+__device__ cudaGlobals globals;
 
 obj *host_objs;
 host_vector<bin> host_bins;
@@ -120,8 +88,12 @@ void host_check_bin(bin *b, size_t bin_size) {
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
-void setup_rand(int size, dev_bin *bins,
-                ghetto_vec<float> ecdfs, ghetto_vec<float> fcdfs){
+void setup_rand(){
+    int size = globals.size;
+    dev_bin *bins = globals.bins;
+    ghetto_vec<float> ecdfs = globals.ecdfs;
+    ghetto_vec<float> fcdfs = globals.fcdfs;
+
     ecdfs.resize(size);
     fcdfs.resize(size);
     int bin_size = params.bin_size;
@@ -140,16 +112,23 @@ void setup_rand(int size, dev_bin *bins,
 
 
 __global__ void
-kernel(dev_bin *bins, int maxsize, int *dev_retval_pt,
-       obj *obj_out, size_t *idx_out) {
-    size_t size = 0;
-    int num_objs = params.num_objs;
-    obj *objs = params.objs;
+kernel() {
     int bin_size = params.bin_size;
-    ghetto_vec<float> ecdfs; // CDF of empty space
-    ghetto_vec<float> fcdfs; // CDF of full space
+    int num_objs = params.num_objs;
+    int maxsize = params.maxsize;
+    int *dev_retval_pt = params.dev_retval_pt;
+    obj *objs = params.objs;
+    obj *obj_out = params.obj_out;
+    size_t *idx_out = params.idx_out;
+
+    globals = cudaGlobals(maxsize);
+
+    dev_bin *bins = globals.bins;
+    size_t size = globals.size;
+
     thrust::sort(cuda::par, objs, &objs[num_objs],
         [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
+
     for (size_t i = 0; i < num_objs; i++) {
         obj obj = objs[i];
         bool found_fit_flag = false;
@@ -213,27 +192,27 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 __host__
 void run() {
-    dev_bin *bins;
     obj *obj_out;
     size_t *idx_out;
-    int maxsize = calculate_maxsize();
-    cout << "Max number of bins " << maxsize << std::endl;
-    int *dev_retval_pt, host_retval;
+    int *dev_retval_pt, host_retval, maxsize;
     cudaParams p;
-    gpuErrchk(cudaMalloc(&dev_retval_pt, sizeof(int)));
-    gpuErrchk(cudaMalloc(&bins, maxsize * sizeof(dev_bin)));
-    gpuErrchk(cudaMalloc(&objs, host_num_objs * sizeof(obj)));
+
+    maxsize = calculate_maxsize();
+    cout << "Max number of bins " << maxsize << std::endl;
+
+    p.total_obj_size = host_total_obj_size;
+    p.bin_size = host_bin_size;
+    p.num_objs = host_num_objs;
+    p.maxsize = maxsize;
+    gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
+    gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
-    gpuErrchk(cudaMemcpy(objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
-    p.objs = objs;
-    p.num_objs = host_num_objs;
-    p.bin_size = host_bin_size;
-    p.total_obj_size = host_total_obj_size;
+    dev_retval_pt = p.dev_retval_pt;
+
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
-    kernel<<<1,1>>>(raw_pointer_cast(&bins[0]), maxsize, dev_retval_pt,
-                    obj_out, idx_out);
+    kernel<<<1,1>>>();
     cudaThreadSynchronize();
 
     cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
