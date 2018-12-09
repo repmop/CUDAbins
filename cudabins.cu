@@ -110,6 +110,41 @@ void setup_rand(){
     }
 }
 
+// Fill bins using next-fit
+__device__
+void runNF () {
+    obj *objs = params.objs;
+    int bin_size = params.bin_size;
+    int num_objs = params.num_objs;
+    int maxsize = params.maxsize;
+
+    dev_bin_t *bins = globals.bins;
+
+    // Start by allocating first bin
+    size_t bi = 0; // Index of last valid bin
+    dev_bin_t *b = &(bins[bi]);
+    init_dev_bin(b, 10);
+
+    for (size_t oi = 0; oi < num_objs; oi++) {
+        obj_t *o = &objs[oi];
+        if(b->occupancy + o->size > bin_size){
+            // Move to a new bin (space is already allocated)
+            bi++;
+            if (bi >= maxsize) {
+                *num_bins = -1;
+                return;
+            }
+
+            b = &(bins[bi]);
+            init_dev_bin(b, 10);
+        }
+        add_obj(b, o);
+    }
+
+    *num_bins = bi + 1;
+
+    return;
+}
 
 __global__ void
 kernel() {
