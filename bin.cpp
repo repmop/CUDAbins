@@ -6,13 +6,6 @@
 #include <fstream>
 #include <random>
 
-//#define DEBUG
-#ifdef DEBUG
-    #define DEBUG_CHECK_BIN(bin) check_bin(bin)
-#else
-    #define DEBUG_CHECK_BIN(bin)
-#endif
-
 using namespace std;
 
 uint32_t total_obj_size = 0; //pseudo-constant
@@ -23,11 +16,7 @@ vector<bin_t> bins;
 vector<bin_t> best_bins;
 vector<float> ecdfs; // CDF of empty space
 vector<float> fcdfs; // CDF of full space
-// For int-based version
-//vector<uint32_t> fcdfs; // CDF of full space
-uint32_t fcdf_max;
 alias *alias_table;
-
 
 // Allocate and populate a bin_t with the objs in obj_list
 bin_t *make_bin(vector<obj_t> obj_list){
@@ -64,7 +53,7 @@ bool parse(char *infile) {
     // cout << obj_data     << endl;
 
 
-    // Initialize object array
+    // Initialize object array and put one obj in each bin
     objs = new obj_t[num_objs];
     auto obj_array = obj_data["objs"];
     for(uint32_t i = 0; i < num_objs; i++){
@@ -73,6 +62,9 @@ bool parse(char *infile) {
         #endif
         objs[i].size = obj_array[i].asUInt();
         total_obj_size += obj_array[i].asUInt();
+
+        // TODO: aaaaaaa struct copying is scary
+        // bins.push_back(*make_bin(&objs[i]));
     }
     return true;
 }
@@ -107,12 +99,12 @@ void constrain() {
         }
         if (new_bin_flag) {
             bins.push_back(*b);
-            DEBUG_CHECK_BIN(&bins[i]);
+            check_bin(&bins[i]);
         }
     }
 
     for(size_t ii = 0; ii < bins.size(); ii++){
-        DEBUG_CHECK_BIN(&bins[ii]);
+        check_bin(&bins[ii]);
     }
 
 }
@@ -132,7 +124,7 @@ void constrain_bin(uint32_t idx) {
             newbin->occupancy += obj.size;
             newbin->obj_list.push_back(obj);
         }
-        DEBUG_CHECK_BIN(&bins[idx]);
+        check_bin(&bins[idx]);
 
         bins.push_back(*newbin);
         // If the new bin is also too full, fix it
@@ -152,90 +144,26 @@ void setup_rand(){
     float sum_empty_space = (float)(bins.size() * bin_size - total_obj_size);
     float ecdf = 0.f;
     float fcdf = 0.f;
-    size_t i;
-    for(i = 0; i < bins.size() - 1; i++){
+    for(uint32_t i = 0; i < bins.size(); i++){
         ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
         ecdfs[i] = ecdf;
         fcdf += ((float) bins[i].occupancy) / total_obj_size;
         fcdfs[i] = fcdf;
     }
-    // Make the final value (bins.size() - 1) greater than 1
-    //  so upper_bound doesn't break
-    ecdfs[i] = 2.f;
-    fcdfs[i] = 2.f;
-}
-
-// Recalculate data structures used by rand_empty on current bins.
-void setup_rand_empty(){
-    ecdfs.resize(bins.size());
-
-    float sum_empty_space = (float)(bins.size() * bin_size - total_obj_size);
-    float ecdf = 0.f;
-    size_t i;
-    for(i = 0; i < bins.size() - 1; i++){
-        ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
-        ecdfs[i] = ecdf;
-    }
-    // Make the final value greater than 1 so upper_bound doesn't break
-    ecdfs[i] = 2.f;
-}
-
-// Recalculate data structures used by rand_full on current bins. Assign zero
-//  probability to bins that can't fit src_occ;
-void setup_rand_full(uint32_t src_occ, uint32_t src){
-    fcdfs.resize(bins.size());
-
-    uint32_t max_occ = bin_size - src_occ;
-
-    uint32_t fcdf = 0;
-    size_t i;
-    for(i = 0; i < bins.size(); i++){
-        // If a bin is too full, give it 0 probability
-        if(bins[i].occupancy <= max_occ && i != src){
-            fcdf += bins[i].occupancy;
-        }
-
-        fcdfs[i] = fcdf;
-    }
-
-    fcdf_max = fcdf;
 }
 
 // Select a random bin weighted in favor of empty bins. Uses data structures
 //  generated in setup_rand, which may be stale.
 uint32_t rand_empty(){
-    size_t ret = upper_bound(ecdfs.begin(), ecdfs.end(),
-                             ((float)rand()) / RAND_MAX) - ecdfs.begin();
-    assert(0 <= ret);
-    assert(ret < bins.size());
-    return ret;
+    return upper_bound(ecdfs.begin(), ecdfs.end(), ((float)rand()) / RAND_MAX) -ecdfs.begin();
 }
 
 // Select a random bin weighted in favor of full bins.
 uint32_t rand_full(){
-    size_t ret = upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
+    return upper_bound(fcdfs.begin(), fcdfs.end(), ((float)rand()) / RAND_MAX) -
              fcdfs.begin();
-    assert(0 <= ret);
-    assert(ret < bins.size());
-    return ret;
 }
-/* int-based version
-uint32_t rand_full(){
-    size_t ret;
-    if(fcdf_max == 0) {
-        ret = rand() % bins.size();
-    } else {
-        ret = upper_bound(fcdfs.begin(), fcdfs.end(), rand() % fcdf_max)
-                      - fcdfs.begin();
-    }
-    assert(0 <= ret);
-    assert(ret < bins.size());
-    return ret;
-}
-*/
 
-int overflow_count = 0;
-int trial_count = 0;
 void optimize() {
     if (bins.size() <= 1) {
         return;
@@ -243,44 +171,44 @@ void optimize() {
 
     setup_rand();
     size_t src = rand_empty();
+    // size_t src = rand() % bins.size();
     bin_t *srcbin = &bins[src];
 
-    for(uint32_t i = 0; i < srcbin->obj_list.size(); i++){
-        uint32_t obj_size = srcbin->obj_list[i].size;
+    // TODO: consider changing how we break up srcbin to put each item in
+    //  a different bin
+    uint32_t src_occ = srcbin->occupancy;
+    // Choose a destination bin that is not the src and has enough space
+    size_t dest;
+    const int retries = 1000; // How many destinations to try
+    for(int i = 0; i < retries; i++){
+        // Choose a destination other than the src
+        while(src == (dest = rand_full()));
 
-        // Choose a destination bin that is not the src and has enough space
-        size_t dest;
-        const int retries = 1000; // How many destinations to try
-        trial_count++;
-        overflow_count++;
-        for(int j = 0; j < retries; j++){
-            // Choose a destination other than the src
-            while(src == (dest = rand_full()));
-
-            if(bins[dest].occupancy + obj_size <= bin_size){
-                overflow_count--;
-                break;
-            }
+        if(bins[dest].occupancy + src_occ <= bin_size){
+            break;
         }
-        bin_t *destbin = &bins[dest];
-
-        destbin->obj_list.push_back(srcbin->obj_list[i]);
-        destbin->occupancy += obj_size;
     }
+    bin_t *destbin = &bins[dest];
+
+    check_bin(srcbin);
+    check_bin(destbin);
+
+    // Put src in dest
+    destbin->obj_list.insert(destbin->obj_list.end(),
+                             srcbin->obj_list.begin(), srcbin->obj_list.end());
+    destbin->occupancy += srcbin->occupancy;
 
     // Delete srcbin
     bins.erase(bins.begin() + src);
 
-    // TODO: only constrain the bins that need constraining
-    // if(src < dest){
-    //     dest--;
-    // }
+    if(src < dest){
+        dest--;
+    }
 
-    // if(bins[dest].occupancy > bin_size){
-    //     overflow_count++;
-    //     constrain_bin(dest);
-    // }
-    constrain();
+    if(bins[dest].occupancy > bin_size){
+        constrain_bin(dest);
+    }
+
 }
 
 // Fill bins using best-fit decreasing
@@ -308,25 +236,6 @@ void runBFD() {
     return;
 }
 
-// Fill bins using next-fit
-void runNF() {
-    bins.clear();
-    bin_t *b = new bin_t();
-
-    for (size_t i = 0; i < num_objs; i++) {
-        obj_t *o = &objs[i];
-        if(b->occupancy + o->size > bin_size){
-            bins.push_back(*b);
-            b = new bin_t();
-        }
-        b->occupancy += o->size;
-        b->obj_list.push_back(*o);
-    }
-    bins.push_back(*b);
-
-    return;
-}
-
 void run() {
     // bins.push_back(*make_bin(&objs[0]));
     // for (size_t i = 1; i < num_objs; i++) {
@@ -336,11 +245,11 @@ void run() {
     // }
     // constrain();
 
-    runNF();
-    srand(123412341);
+    runBFD();
+    srand(1234123413);
     const int bins_per_pass = 1;
-    const int passes = 1000;
-    const int trials = 50;
+    const int passes = 500;
+    const int trials = 100;
     uint32_t best_size = UINT32_MAX;
     vector<bin_t> seed = bins;
     for (int trial = 0; trial < trials; trial++) {
@@ -348,13 +257,11 @@ void run() {
             for (int j = 0; j < bins_per_pass; j++) {
                 optimize();
                 for(size_t ii = 0; ii < bins.size(); ii++){
-                    DEBUG_CHECK_BIN(&bins[ii]);
+                    check_bin(&bins[ii]);
                 }
             }
         }
-
         if (bins.size() < best_size) {
-            printf("Size %d\n", (int)bins.size());
             best_bins = bins;
             best_size = bins.size();
         }
@@ -362,7 +269,6 @@ void run() {
     }
     bins = best_bins;
 
-    printf("Overflow: %d / %d\n", overflow_count, trial_count);
 
     return;
 }

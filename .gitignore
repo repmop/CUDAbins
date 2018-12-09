@@ -8,3 +8,4 @@ cudabins
 
 *.txt
 !inputs/*.txt
+Makefile
