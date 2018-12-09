@@ -50,11 +50,31 @@ typedef struct ghetto_vec {
     obj_t *arr;
 } ghetto_vec_t;
 
+__inline__ __device__
+void init_ghetto_vector(ghetto_vec_t *v, size_t size){
+    v->maxlen = size;
+    v->arr = new obj_t[v->maxlen];
+    v->num_entries = 0;
+}
+
 typedef struct dev_bin {
   uint32_t occupancy;
   ghetto_vec obj_list;
   alias_t alias;
 } dev_bin_t;
+
+__inline__ __device__
+void init_dev_bin(dev_bin_t *b, size_t obj_arr_size){
+    init_ghetto_vector(&(b->obj_list), obj_arr_size);
+    b->occupancy = 0;
+    //b->alias = ___;
+}
+
+__inline__ __device__
+void add_obj(dev_bin_t *bin, obj_t *obj){
+    bin->occupancy += obj->size;
+    bin->obj_list.push_back(*obj);
+}
 
 typedef struct bin {
   uint32_t occupancy;
@@ -157,8 +177,7 @@ kernelBFD(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
         for (size_t j = 0; j < num_bins; j++) {
             dev_bin_t *bin = &bins[j];
             if (bin->occupancy + obj.size <= bin_size) {
-                bin->occupancy += obj.size;
-                bin->obj_list.push_back(obj);
+                add_obj(bin, &obj);
                 found_fit_flag = true;
                 break;
             }
@@ -168,15 +187,16 @@ kernelBFD(dev_bin_t *bins, int maxsize, int *dev_retval_pt,
         // If you don't find any, make a new bin
         if (!found_fit_flag) {
             dev_bin_t b;
-            b.occupancy = obj.size;
             if (num_bins >= maxsize - 1) {
                 *dev_retval_pt = -1;
                 return;
             }
-            b.obj_list.maxlen = 10;
-            b.obj_list.arr = new obj_t[b.obj_list.maxlen];
-            b.obj_list.num_entries = 0;
-            b.obj_list.push_back(obj);
+
+            // Make a new bin and put the object in it
+            init_dev_bin(&b, 10);
+            add_obj(&b, &obj);
+
+            // Add this bin to bins
             bins[num_bins] = b;
             num_bins++;
         }
@@ -270,10 +290,42 @@ void runBFD() {
     for (size_t bi = 0; bi < host_num_bins; bi++) {
         bin_t *b = new bin_t;
         for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
-          b->obj_list.push_back(host_objs[oi]);
+            b->obj_list.push_back(host_objs[oi]);
         }
         bins_out[bi] = *b;
     }
+}
+
+// Fill bins using next-fit
+__device__
+void runNF (dev_bin_t *bins, obj_t *objs, int num_objs, int bin_size,
+            int maxsize, int *num_bins) {
+    //bins.clear();
+
+    // Start by allocating first bin
+    size_t bi = 0; // Index of last valid bin
+    dev_bin_t *b = &(bins[bi]);
+    init_dev_bin(b, 10);
+
+    for (size_t oi = 0; oi < num_objs; oi++) {
+        obj_t *o = &objs[oi];
+        if(b->occupancy + o->size > bin_size){
+            // Move to a new bin (space is already allocated)
+            bi++;
+            if (bi >= maxsize) {
+                *num_bins = -1;
+                return;
+            }
+
+            b = &(bins[bi]);
+            init_dev_bin(b, 10);
+        }
+        add_obj(b, o);
+    }
+
+    *num_bins = bi + 1;
+
+    return;
 }
 
 __host__
