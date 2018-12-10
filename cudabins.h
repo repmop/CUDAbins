@@ -21,6 +21,18 @@ struct ghetto_vec {
         maxlen = DEF_ENTRIES;
         arr = new T[maxlen];
     }
+    __device__
+    void erase(uint32_t ind) {
+        for (int i = ind; i < num_entries - 1; i++) {
+            arr[i] = arr[i+1];
+        }
+        num_entries--;
+    }
+
+    __device__
+    void clear() {
+        num_entries = 0;
+    }
 
     __device__
     void push_back (const T& val) {
@@ -90,6 +102,7 @@ struct dev_bin {
     uint32_t occupancy;
     ghetto_vec<obj> obj_list;
     alias alias;
+    bool valid;
     __device__
     dev_bin() {}
     __device__
@@ -121,7 +134,7 @@ struct cudaGlobals {
     dev_bin *bins;
     ghetto_vec<float> ecdfs;
     ghetto_vec<float> fcdfs;
-    size_t size;
+    size_t num_bins;
     curandState s;
 
     __device__
@@ -134,13 +147,17 @@ struct cudaGlobals {
         }
         ecdfs = ghetto_vec<float> (0);
         fcdfs = ghetto_vec<float> (0);
-        size = 0;
+        num_bins = 0;
         curand_init(SEED, 0, 0, &s);
     }
 
     __device__
-    float rand() {
+    float rand_f() {
         return curand_uniform(&s);
+    }
+    __device__
+    uint32_t rand_i() {
+        return curand(&s);
     }
 };
 

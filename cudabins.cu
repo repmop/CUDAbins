@@ -90,33 +90,33 @@ void host_check_bin(bin *b, size_t bin_size) {
 __device__
 uint32_t rand_empty(){
     ghetto_vec<float> ecdfs = globals.ecdfs;
-    return ecdfs.upper_bound(globals.rand() / RAND_MAX - ecdfs[0]);
+    return ecdfs.upper_bound(globals.rand_f() / RAND_MAX - ecdfs[0]);
 }
 
 // Select a random bin weighted in favor of full bins.
 __device__
 uint32_t rand_full(){
     ghetto_vec<float> fcdfs = globals.fcdfs;
-    return fcdfs.upper_bound(globals.rand() / RAND_MAX - fcdfs[0]);
+    return fcdfs.upper_bound(globals.rand_f() / RAND_MAX - fcdfs[0]);
 }
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
 void setup_rand(){
-    int size = globals.size;
+    int num_bins = globals.num_bins;
     dev_bin *bins = globals.bins;
     ghetto_vec<float> ecdfs = globals.ecdfs;
     ghetto_vec<float> fcdfs = globals.fcdfs;
 
-    ecdfs.resize(size);
-    fcdfs.resize(size);
+    ecdfs.resize(num_bins);
+    fcdfs.resize(num_bins);
     int bin_size = params.bin_size;
     int total_obj_size = params.total_obj_size;
 
-    float sum_empty_space = (float)(size * bin_size - total_obj_size);
+    float sum_empty_space = (float)(num_bins * bin_size - total_obj_size);
     float ecdf = 0.f;
     float fcdf = 0.f;
-    for(uint32_t i = 0; i < size; i++){
+    for(uint32_t i = 0; i < num_bins; i++){
         ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
         ecdfs[i] = ecdf;
         fcdf += ((float) bins[i].occupancy) / total_obj_size;
@@ -131,7 +131,7 @@ void runNF () {
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
     int maxsize = params.maxsize;
-    size_t *size = &globals.size;
+    size_t *num_bins = &globals.num_bins;
 
     dev_bin *bins = globals.bins;
 
@@ -145,7 +145,7 @@ void runNF () {
             // Move to a new bin (space is already allocated)
             bi++;
             if (bi >= maxsize) {
-                *size = maxsize;
+                *num_bins = maxsize;
                 return;
             }
 
@@ -155,10 +155,139 @@ void runNF () {
         b->obj_list.push_back(*o);
     }
 
-    *size = bi + 1;
+    *num_bins = bi + 1;
 
     return;
 }
+
+__global__ void
+kernelWalkPack() {
+
+    int bin_size = params.bin_size;
+    int maxsize = params.maxsize;
+    int *dev_retval_pt = params.dev_retval_pt;
+    obj *obj_out = params.obj_out;
+    size_t *idx_out = params.idx_out;
+
+    globals = cudaGlobals(maxsize);
+
+    dev_bin *bins = globals.bins;
+    size_t num_bins = globals.num_bins;
+
+    // Start with next fit
+    runNF();
+
+    // This represents just one trial
+    const int passes = 500;
+    for(int pass = 0; pass < passes; pass++){
+        // Optimize
+        if (num_bins <= 1) {
+            break;
+        }
+
+        size_t src;
+        do {
+            src = globals.rand_i() % num_bins;
+        } while (!bins[src].valid);
+        dev_bin *srcbin = &bins[src];
+
+        for(uint32_t i = 0; i < srcbin->obj_list.size(); i++){
+            uint32_t obj_size = srcbin->obj_list.arr[i].size;
+
+            // Choose a destination bin that is not the src and has enough space
+            size_t dest;
+            const int retries = 1000; // How many destinations to try
+
+            for(int j = 0; j < retries; j++){
+                // Choose a destination other than the src
+                while(src == (dest = globals.rand_i() % num_bins));
+                // while(src == (dest = rand_full()));
+
+                if(bins[dest].occupancy + obj_size <= bin_size){
+                    break;
+                }
+            }
+            dev_bin *destbin = &bins[dest];
+
+            destbin->obj_list.push_back(srcbin->obj_list.arr[i]);
+            destbin->occupancy += obj_size;
+        }
+
+        // Delete srcbin
+        // bins.erase(bins.begin() + src);
+        // srcbin->valid = false;
+        for(size_t i = src; i < num_bins; i++){
+            bins[i] = bins[i+1];
+        }
+        num_bins--;
+
+        // TODO: only constrain the bins that need constraining
+        // if(src < dest){
+        //     dest--;
+        // }
+        // if(bins[dest].occupancy > bin_size){
+        //     overflow_count++;
+        //     constrain_bin(dest);
+        // }
+
+        // Constrain all bins
+
+        // Do want i to track the growing bins list here
+        for (size_t i = 0; i < num_bins; i++) {
+            dev_bin *bin = &bins[i];
+            dev_bin *newbin;
+
+            // If bin is overfull, allocate a new bin
+            if (bin->occupancy > bin_size) {
+                if (num_bins >= maxsize - 1) {
+                    *dev_retval_pt = -1;
+                    printf("Too many bins\n");
+                    return;
+                }
+
+                newbin = &bins[num_bins];
+                num_bins++;
+                *newbin = dev_bin(0);
+            }
+
+            // Move objects from overfull bin to new bin
+            while (bin->occupancy > bin_size) {
+                uint32_t r = globals.rand_i() % bin->obj_list.size();
+                obj obj = bin->obj_list.arr[r];
+                bin->obj_list.erase(r);
+                bin->occupancy -= obj.size;
+                newbin->occupancy += obj.size;
+                newbin->obj_list.push_back(obj);
+            }
+        }
+    }
+
+    // TODO: Reduce across threads to find best packing
+
+    // Copy objects in order to obj_out
+    // idx_out holds the indices into obj_out where each bin starts
+    size_t out_idx = 0;
+    size_t bi;
+    for(bi = 0; bi < num_bins; bi++){
+      idx_out[bi] = out_idx;
+      for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
+        obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+        out_idx++;
+      }
+    }
+    idx_out[bi] = out_idx;
+
+    for (size_t j = 0; j < num_bins; j++) {
+        check_bin(&bins[j], bin_size);
+    }
+
+    // Return the number of bins
+    *dev_retval_pt = num_bins;
+    printf("Num bins: %i\n", num_bins);
+
+    return;
+}
+
 
 __global__ void
 kernel() {
@@ -173,7 +302,7 @@ kernel() {
     globals = cudaGlobals(maxsize);
 
     dev_bin *bins = globals.bins;
-    size_t size = globals.size;
+    size_t num_bins = globals.num_bins;
 
     thrust::sort(cuda::par, objs, &objs[num_objs],
         [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
@@ -181,7 +310,7 @@ kernel() {
     for (size_t i = 0; i < num_objs; i++) {
         obj obj = objs[i];
         bool found_fit_flag = false;
-        for (size_t j = 0; j < size; j++) {
+        for (size_t j = 0; j < num_bins; j++) {
             dev_bin *bin = &bins[j];
             if (bin->occupancy + obj.size <= bin_size) {
                 bin->occupancy += obj.size;
@@ -194,20 +323,20 @@ kernel() {
         if (!found_fit_flag) {
             dev_bin b;
             b.occupancy = obj.size;
-            if (size >= maxsize - 1) {
+            if (num_bins >= maxsize - 1) {
                 *dev_retval_pt = -1;
                 return;
             }
             b.obj_list.push_back(obj);
-            bins[size] = b;
-            size++;
+            bins[num_bins] = b;
+            num_bins++;
         }
     }
 
     // Copy objects to serial output
     size_t out_idx = 0;
     size_t bi;
-    for(bi = 0; bi < size; bi++){
+    for(bi = 0; bi < num_bins; bi++){
       idx_out[bi] = out_idx;
       for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
         obj_out[out_idx] = bins[bi].obj_list.arr[oi];
@@ -216,11 +345,11 @@ kernel() {
     }
     idx_out[bi] = out_idx;
 
-    for (size_t j = 0; j < size; j++) {
+    for (size_t j = 0; j < num_bins; j++) {
         check_bin(&bins[j], bin_size);
     }
-    printf("Num bins: %zu\n", size);
-    *dev_retval_pt = (int) size;
+    printf("Num bins: %zu\n", num_bins);
+    *dev_retval_pt = (int) num_bins;
     return;
 }
 
