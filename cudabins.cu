@@ -3,8 +3,8 @@
 #include <driver_functions.h>
 
 #include <json/json.h>
-#include <assert.h>
 #include <jsoncpp.cpp>
+#include <assert.h>
 #include <iostream>
 #include <fstream>
 #include <random>
@@ -85,6 +85,20 @@ void host_check_bin(bin *b, size_t bin_size) {
     assert(b->occupancy <= bin_size);
 }
 
+// Select a random bin weighted in favor of empty bins. Uses data structures
+//  generated in setup_rand, which may be stale.
+__device__
+uint32_t rand_empty(){
+    ghetto_vec<float> ecdfs = globals.ecdfs;
+    return ecdfs.upper_bound(globals.rand() / RAND_MAX - ecdfs[0]);
+}
+
+// Select a random bin weighted in favor of full bins.
+__device__
+uint32_t rand_full(){
+    ghetto_vec<float> fcdfs = globals.fcdfs;
+    return fcdfs.upper_bound(globals.rand() / RAND_MAX - fcdfs[0]);
+}
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
@@ -117,31 +131,31 @@ void runNF () {
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
     int maxsize = params.maxsize;
+    size_t *size = &globals.size;
 
-    dev_bin_t *bins = globals.bins;
+    dev_bin *bins = globals.bins;
 
     // Start by allocating first bin
     size_t bi = 0; // Index of last valid bin
-    dev_bin_t *b = &(bins[bi]);
-    init_dev_bin(b, 10);
+    dev_bin *b = &(bins[bi]);
 
     for (size_t oi = 0; oi < num_objs; oi++) {
-        obj_t *o = &objs[oi];
+        obj *o = &objs[oi];
         if(b->occupancy + o->size > bin_size){
             // Move to a new bin (space is already allocated)
             bi++;
             if (bi >= maxsize) {
-                *num_bins = -1;
+                *size = maxsize;
                 return;
             }
 
             b = &(bins[bi]);
-            init_dev_bin(b, 10);
+            *b = dev_bin(0);
         }
-        add_obj(b, o);
+        b->obj_list.push_back(*o);
     }
 
-    *num_bins = bi + 1;
+    *size = bi + 1;
 
     return;
 }
