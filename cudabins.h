@@ -75,14 +75,36 @@ struct ghetto_vec {
     T &operator[] (int i) {
         return arr[i];
     }
-    __device__
-    uint32_t upper_bound (T target) {
+
+    // For debug
+    __device__ uint32_t seq_upper_bound (T target) {
         for (uint32_t i = 0; i < num_entries; i++) {
             if (arr[i] > target) {
                 return i;
             }
         }
         return num_entries - 1;
+    }
+
+    // Returns the first index i s.t. arr[i] > target
+    __device__
+    uint32_t upper_bound(T target){
+        uint32_t lo = 0;               // arr[lo] < target
+        uint32_t hi = num_entries - 1; // arr[hi] >= target
+        uint32_t mid;
+        if(arr[lo] >= target){ return lo; }
+        if(arr[hi] <  target){ return hi; }
+
+        while(hi - lo > 1){
+            mid = lo + (hi-lo)/2;
+            if(arr[mid] < target){
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        return hi;
     }
 
 };
