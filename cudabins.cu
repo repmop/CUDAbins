@@ -242,7 +242,9 @@ kernelBFD() {
 
 __global__ void
 kernelWalkPack() {
-    int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    // ID of thread within this trial. Trials are mapped to blocks,
+    //  so thread_id does not depend on blockIdx
+    int thread_id = threadIdx.x;
 
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
@@ -328,36 +330,45 @@ kernelWalkPack() {
         //     constrain_bin(dest);
         // }
 
-        // Constrain all bins
+        // Constrain
 
-        // Do want i to track the growing bins list here
         size_t bins_per_thread = (num_bins + blockDim.x - 1) / blockDim.x;
-        size_t start_bin = thread_id *
-        for (size_t i = 0; i < num_bins; i++) {
+        size_t start_bin = thread_id * bins_per_thread;
+        size_t end_bin = (thread_id + 1) * bins_per_thread;
+        size_t old_num_bins = num_bins; // Freeze this
+
+        // Constrain all the old bins
+        // All new bins must not be overfull
+        for (size_t i = start_bin; i < end_bin && i < old_num_bins; i++) {
             dev_bin *bin = &bins[i];
             dev_bin *newbin;
 
             // If bin is overfull, allocate a new bin
-            if (bin->occupancy > bin_size) {
+            while (bin->occupancy > bin_size) {
                 if (num_bins >= maxsize - 1) {
                     *dev_retval_pt = -1;
                     printf("Too many bins\n");
                     return;
                 }
 
-                newbin = &bins[num_bins];
-                num_bins++;
+                // Requires atomic add, but very low contention
+                size_t new_bin_idx = atomicAdd(&num_bins, 1); // TODO may need to allocate num_bins with cudaMallocManaged
+                newbin = &bins[new_bin_idx];
                 *newbin = dev_bin(0);
-            }
 
-            // Move objects from overfull bin to new bin
-            while (bin->occupancy > bin_size) {
-                uint32_t r = globals.rand_i() % bin->obj_list.size();
-                obj obj = bin->obj_list.arr[r];
-                bin->obj_list.erase(r);
-                bin->occupancy -= obj.size;
-                newbin->occupancy += obj.size;
-                newbin->obj_list.push_back(obj);
+                // Move objects from overfull bin to new bin
+                while (bin->occupancy > bin_size) {
+                    uint32_t r = globals.rand_i() % bin->obj_list.size();
+                    obj obj = bin->obj_list.arr[r];
+                    bin->obj_list.erase(r);
+                    bin->occupancy -= obj.size;
+                    newbin->occupancy += obj.size;
+                    newbin->obj_list.push_back(obj);
+                }
+
+                // Make this swap so the next iteration of the while loop can
+                //  constrain the new bin if it needs
+                bin = newbin;
             }
         }
     }
@@ -366,25 +377,28 @@ kernelWalkPack() {
 
     // Copy objects in order to obj_out
     // idx_out holds the indices into obj_out where each bin starts
-    size_t out_idx = 0;
-    size_t bi;
-    for(bi = 0; bi < num_bins; bi++){
-      idx_out[bi] = out_idx;
-      for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
-        obj_out[out_idx] = bins[bi].obj_list.arr[oi];
-        out_idx++;
-      }
+    if(thread_id == 0){
+        size_t out_idx = 0;
+        size_t bi;
+        for(bi = 0; bi < num_bins; bi++){
+            idx_out[bi] = out_idx;
+            for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
+                obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+                out_idx++;
+            }
+        }
+        idx_out[bi] = out_idx;
+
+        for (size_t j = 0; j < num_bins; j++) {
+            check_bin(&bins[j], bin_size);
+        }
+
+        // Return the number of bins
+        *dev_retval_pt = num_bins;
+        printf("Num bins: %i\n", num_bins);
     }
-    idx_out[bi] = out_idx;
 
-    for (size_t j = 0; j < num_bins; j++) {
-        check_bin(&bins[j], bin_size);
-    }
-
-    // Return the number of bins
-    *dev_retval_pt = num_bins;
-    printf("Num bins: %i\n", num_bins);
-
+    __syncthreads()
     return;
 }
 
@@ -487,8 +501,13 @@ void run() {
 
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
-    // Run BFD
-    kernelWalkPack<<<1,1>>>();
+    // Run WalkPack
+    int trials = 1;
+    int threads_per_trial = 1;
+    dim3 walkpack_block_dim(threads_per_trial, 1);
+    dim3 walkpack_grid_dim (trials, 1);
+
+    kernelWalkPack<<<walkpack_grid_dim, walkpack_block_dim>>>();
     cudaThreadSynchronize();
 
     // Copy back number of bins
