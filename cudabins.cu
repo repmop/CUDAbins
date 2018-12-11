@@ -18,6 +18,16 @@
 using namespace std;
 using namespace thrust;
 
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess)
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
 __constant__ cudaParams params;
 __device__ cudaGlobals globals;
 
@@ -145,7 +155,7 @@ void runNF () {
             // Move to a new bin (space is already allocated)
             bi++;
             if (bi >= maxsize) {
-                *num_bins = -1;
+                *num_bins = maxsize;
                 return;
             }
 
@@ -265,11 +275,12 @@ kernelWalkPack() {
     // Start with next fit
     if(thread_id == 0){
         runNF();
-    }
-    if(globals.num_bins < 0){
-        if(thread_id == 0)
+
+        if(globals.num_bins >= maxsize){
+            *dev_retval_pt = -1;
             printf("Next Fit failed\n");
-        return;
+            return;
+        }
     }
 
     __syncthreads();
@@ -352,7 +363,8 @@ kernelWalkPack() {
                 }
 
                 // Requires atomic add, but very low contention
-                size_t new_bin_idx = atomicAdd(&num_bins, 1); // TODO may need to allocate num_bins with cudaMallocManaged
+                size_t new_bin_idx =
+                  atomicAdd((unsigned long long int *)(&num_bins), 1); // TODO may need to allocate num_bins with cudaMallocManaged
                 newbin = &bins[new_bin_idx];
                 *newbin = dev_bin(0);
 
@@ -398,7 +410,7 @@ kernelWalkPack() {
         printf("Num bins: %i\n", num_bins);
     }
 
-    __syncthreads()
+    __syncthreads();
     return;
 }
 
@@ -461,16 +473,6 @@ void runBFD(){
     }
 }
 
-
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
-{
-   if (code != cudaSuccess)
-   {
-      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-      if (abort) exit(code);
-   }
-}
 
 __host__
 void run() {
