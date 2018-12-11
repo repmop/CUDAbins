@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #include "bin.h"
-
+#include "parse.h"
 
 void usage() {
   fprintf(stderr, "-f /path/to/input [-o /path/to/output]\n");

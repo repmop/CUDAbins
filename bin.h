@@ -41,4 +41,10 @@ void runNF();
 
 bool dump(char *outfile);
 
+/* Parsed Inputs */
+extern obj *host_objs;
+extern uint32_t host_num_objs;
+extern uint32_t host_bin_size;
+extern uint32_t host_total_obj_size; //pseudo-constant
+
 #endif /* _BIN_H_ */

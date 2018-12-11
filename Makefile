@@ -31,8 +31,8 @@ NVCC=nvcc --compiler-options -Wall --compiler-options -g --compiler-options -gdw
 # NVCC=nvcc --compiler-options -Wall
 
 NVCCFLAGS=-O0 -m64 --gpu-architecture compute_35 -std=c++11
-OBJS=$(OBJDIR)/main.o  $(OBJDIR)/bin.o
-OBJS_CU=$(OBJDIR)/main.o  $(OBJDIR)/cudabins.o
+OBJS=$(OBJDIR)/main.o  $(OBJDIR)/bin.o $(OBJDIR)/parse.o
+OBJS_CU=$(OBJDIR)/main.o  $(OBJDIR)/cudabins.o $(OBJDIR)/parse.o
 
 
 .PHONY: dirs clean

@@ -1,10 +1,10 @@
-#include "bin.h"
-#include <json/json.h>
 #include <assert.h>
-#include <jsoncpp.cpp>
-#include <iostream>
 #include <fstream>
 #include <random>
+#include <algorithm>
+
+#include "bin.h"
+#include "parse.h"
 
 //#define DEBUG
 #ifdef DEBUG
@@ -28,6 +28,8 @@ vector<float> fcdfs; // CDF of full space
 uint32_t fcdf_max;
 alias *alias_table;
 
+uint32_t host_num_bins;
+bin *bins_out;
 
 // Allocate and populate a bin_t with the objs in obj_list
 bin_t *make_bin(vector<obj_t> obj_list){
@@ -50,31 +52,6 @@ bin_t *make_bin(obj_t *obj){
     b->occupancy = obj->size;
 
     return b;
-}
-
-bool parse(char *infile) {
-    ifstream f(infile, std::ifstream::binary);
-    if (f.fail()) {
-        return false;
-    }
-    Json::Value obj_data;
-    f >> obj_data;
-    bin_size = obj_data["bin_size"].asUInt();
-    num_objs = obj_data["num_objs"].asUInt();
-    // cout << obj_data     << endl;
-
-
-    // Initialize object array
-    objs = new obj_t[num_objs];
-    auto obj_array = obj_data["objs"];
-    for(uint32_t i = 0; i < num_objs; i++){
-        #ifdef TAGGING
-        objs[i].tag = i;
-        #endif
-        objs[i].size = obj_array[i].asUInt();
-        total_obj_size += obj_array[i].asUInt();
-    }
-    return true;
 }
 
 void check_bin(bin_t *b) {
@@ -336,6 +313,11 @@ void run() {
     // }
     // constrain();
 
+    objs = host_objs;
+    num_objs = host_num_objs;
+    bin_size = host_bin_size;
+    total_obj_size = host_total_obj_size;
+
     runNF();
     srand(123412341);
     const int bins_per_pass = 1;
@@ -362,36 +344,11 @@ void run() {
     }
     bins = best_bins;
 
+    bins_out = &bins[0];
+    host_num_bins = bins.size();
+
     printf("Overflow: %d / %d\n", overflow_count, trial_count);
 
     return;
 }
 
-bool dump(char *outfile) {
-    Json::Value obj_data;
-    obj_data["bin_size"] = bin_size;
-    obj_data["num_objs"] = num_objs;
-    obj_data["num_bins"] = bins.size();
-    obj_data["objs"] = Json::Value(Json::arrayValue);
-    obj_data["bins"] = Json::Value(Json::arrayValue);
-    for(uint32_t i = 0; i < num_objs; i++){
-        obj_data["objs"][i] = objs[i].size;
-    }
-    for(uint32_t i = 0; i < (uint32_t) bins.size(); i++) {
-        bin_t bin = bins[i];
-        obj_data["bins"][i] = Json::Value(Json::arrayValue);
-        for (uint32_t j = 0; j < bin.obj_list.size(); j++) {
-            obj_data["bins"][i][j] = bin.obj_list[j].size;
-        }
-    }
-    if (outfile==NULL) { //print results to stdout
-        cout << "num_objs: " << num_objs << endl;
-        cout << "num_bins: " << bins.size() << endl;
-    } else { //print to file
-        filebuf fb;
-        fb.open(outfile, ios::out);
-        ostream f(&fb);
-        f << obj_data;
-    }
-    return true;
-}
