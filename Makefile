@@ -23,7 +23,7 @@ ifeq ($(ARCH), Darwin)
 LDFLAGS=-L/usr/local/depot/cuda-8.0/lib/ -lcudart
 else
 # Building on Linux
-LDFLAGS=-L/usr/local/depot/cuda-8.0/lib64/ -lcudart
+LDFLAGS=-L/usr/local/depot/cuda-8.0/lib64/ -L/usr/local/cuda/lib64/ -lcudart
 endif
 
 
