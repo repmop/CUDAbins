@@ -45,11 +45,14 @@ int calculate_maxsize() {
 }
 
 __device__
-void check_bin(dev_bin *b, int bin_size) {
+void check_bin(dev_bin *b, int bin_size, int linum) {
     uint32_t sum = 0;
     for (int i = 0; i < b->obj_list.size(); i++) {
         sum += b->obj_list.arr[i].size;
     }
+
+    if(b->occupancy != sum || b->occupancy > bin_size)
+        printf("Assert fail on line %d\n", linum);
     assert(b->occupancy == sum);
     assert(b->occupancy <= bin_size);
 }
@@ -185,7 +188,7 @@ kernelBFD() {
                 found_fit_flag = true;
                 break;
             }
-            check_bin(bin, bin_size);
+            check_bin(bin, bin_size, __LINE__);
         }
 
         // If you don't find any, make a new bin
@@ -221,7 +224,7 @@ kernelBFD() {
     idx_out[bi] = out_idx;
 
     for (size_t j = 0; j < num_bins; j++) {
-        check_bin(&bins[j], bin_size);
+      check_bin(&bins[j], bin_size, __LINE__);
     }
 
     setup_rand();
@@ -334,7 +337,6 @@ kernelWalkPack() {
         // }
 
         // Constrain
-
         size_t bins_per_thread = (*num_bins + blockDim.x - 1) / blockDim.x;
         size_t start_bin = thread_id * bins_per_thread;
         size_t end_bin = (thread_id + 1) * bins_per_thread;
@@ -382,6 +384,7 @@ kernelWalkPack() {
 
     // Copy objects in order to obj_out
     // idx_out holds the indices into obj_out where each bin starts
+    printf("Outputting\n");
     if(thread_id == 0){
         size_t out_idx = 0;
         size_t bi;
@@ -395,7 +398,7 @@ kernelWalkPack() {
         idx_out[bi] = out_idx;
 
         for (size_t j = 0; j < *num_bins; j++) {
-            check_bin(&bins[j], bin_size);
+          check_bin(&bins[j], bin_size, __LINE__);
         }
 
         // Return the number of bins
@@ -420,13 +423,17 @@ void setup(cudaParams& p) {
     p.num_objs = host_num_objs;
     p.maxsize = maxsize;
 
+    cout << "allocating space" << std::endl;
+
     // Allocate space on device
     gpuErrchk(cudaMallocManaged(&p.dev_retval_pt, sizeof(int))); // Need managed memory for atomic add
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
+    cout << "copying inputs" << std::endl;
     gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
+    cout << "setup done" << std::endl;
 }
 
 void cleanup(cudaParams& p) {
@@ -491,8 +498,9 @@ void run() {
     dim3 walkpack_block_dim(threads_per_trial, 1);
     dim3 walkpack_grid_dim (trials, 1);
 
+    cout << "Running kernel" << std::endl;
     kernelWalkPack<<<walkpack_grid_dim, walkpack_block_dim>>>();
     cudaThreadSynchronize();
-
+    cout << "Kernel done" << std::endl;
     cleanup(p);
 }

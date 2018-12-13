@@ -131,6 +131,7 @@ struct dev_bin {
     dev_bin(int dummy) {
         occupancy = 0;
         obj_list = ghetto_vec<obj> (0);
+        valid = true;
     }
     __device__
     operator uint32_t () {

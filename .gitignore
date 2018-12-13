@@ -9,3 +9,5 @@ cudabins
 *.txt
 !inputs/*.txt
 Makefile
+
+latedays.qsub.*
