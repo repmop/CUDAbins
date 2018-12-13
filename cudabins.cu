@@ -105,6 +105,8 @@ void setup_rand(){
 // Fill bins using next-fit
 __device__
 void runNF () {
+    printf("Starting NF\n");
+
     obj *objs = params.objs;
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
@@ -117,8 +119,9 @@ void runNF () {
     size_t bi = 0; // Index of last valid bin
     dev_bin *b = &(bins[bi]);
 
-    for (size_t oi = 0; oi < num_objs; oi++) {
+    for(size_t oi = 0; oi < num_objs; oi++){
         obj *o = &objs[oi];
+
         if(b->occupancy + o->size > bin_size){
             // Move to a new bin (space is already allocated)
             bi++;
@@ -130,11 +133,13 @@ void runNF () {
             b = &(bins[bi]);
             *b = dev_bin(0);
         }
+
         b->obj_list.push_back(*o);
+        b->occupancy += o->size;
     }
 
     *num_bins = bi + 1;
-
+    printf("NF done with %lu bins\n", *num_bins);
     return;
 }
 
@@ -162,7 +167,6 @@ kernelBFD() {
     // Put each object in the first bin it fits into
     for (size_t i = 0; i < num_objs; i++) {
         obj obj = objs[i];
-
         // Scan through existing bins for space
         bool found_fit_flag = false;
         for (size_t j = 0; j < num_bins; j++) {
@@ -179,12 +183,13 @@ kernelBFD() {
         // If you don't find any, make a new bin
         if (!found_fit_flag) {
             if (num_bins >= maxsize - 1) {
+                // printf("Mysterious\n");
                 *dev_retval_pt = -1;
                 return;
             }
 
             // Make a new bin and put the object in it
-            dev_bin b;
+            dev_bin b = dev_bin(0);
             b.occupancy = obj.size;
             b.obj_list.push_back(obj);
 
@@ -199,11 +204,11 @@ kernelBFD() {
     size_t out_idx = 0;
     size_t bi;
     for(bi = 0; bi < num_bins; bi++){
-      idx_out[bi] = out_idx;
-      for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
-        obj_out[out_idx] = bins[bi].obj_list.arr[oi];
-        out_idx++;
-      }
+        idx_out[bi] = out_idx;
+        for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
+            obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+            out_idx++;
+        }
     }
     idx_out[bi] = out_idx;
 
@@ -212,8 +217,8 @@ kernelBFD() {
     }
 
     // Return the number of bins
-    printf("Num bins: %zu\n", num_bins);
     *dev_retval_pt = (int) num_bins;
+    printf("Finished, Num bins: %i\n", num_bins);
 
     return;
 }
@@ -227,7 +232,8 @@ kernelWalkPack() {
 
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
-    int *dev_retval_pt = params.dev_retval_pt;
+    int *num_bins = params.dev_retval_pt; // Managed memory for atomic add
+
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
 
@@ -239,32 +245,38 @@ kernelWalkPack() {
     __syncthreads();
 
     dev_bin *bins = globals.bins;
-    size_t num_bins = globals.num_bins; // TODO: update globals
 
     // Start with next fit
     if(thread_id == 0){
         runNF();
+    }
 
-        if(globals.num_bins >= maxsize){
-            *dev_retval_pt = -1;
+    // A little hacky
+    *num_bins = globals.num_bins; // TODO: update globals
+
+    if(*num_bins >= maxsize){
+        *num_bins = -1;
+        if(thread_id == 0)
             printf("Next Fit failed\n");
-            return;
-        }
+
+        return;
     }
 
     __syncthreads();
 
     // This represents just one trial
-    const int passes = 500;
+    const int passes = 400;
     for(int pass = 0; pass < passes; pass++){
+
         // Optimize
-        if (num_bins <= 1) {
+        if (*num_bins <= 1) {
+            printf("breaking\n");
             break;
         }
 
         size_t src;
         do {
-            src = globals.rand_i() % num_bins;
+            src = globals.rand_i() % *num_bins;
         } while (!bins[src].valid);
         dev_bin *srcbin = &bins[src];
 
@@ -278,7 +290,7 @@ kernelWalkPack() {
 
                 for(int j = 0; j < retries; j++){
                     // Choose a destination other than the src
-                    while(src == (dest = globals.rand_i() % num_bins));
+                    while(src == (dest = globals.rand_i() % *num_bins));
                     // while(src == (dest = rand_full()));
 
                     if(bins[dest].occupancy + obj_size <= bin_size){
@@ -294,10 +306,10 @@ kernelWalkPack() {
             // Delete srcbin
             // bins.erase(bins.begin() + src);
             // srcbin->valid = false;
-            for(size_t i = src; i < num_bins; i++){
+            for(size_t i = src; i < *num_bins; i++){
                 bins[i] = bins[i+1];
             }
-            num_bins--;
+            (*num_bins)--;
         }
         __syncthreads();
 
@@ -312,10 +324,10 @@ kernelWalkPack() {
 
         // Constrain
 
-        size_t bins_per_thread = (num_bins + blockDim.x - 1) / blockDim.x;
+        size_t bins_per_thread = (*num_bins + blockDim.x - 1) / blockDim.x;
         size_t start_bin = thread_id * bins_per_thread;
         size_t end_bin = (thread_id + 1) * bins_per_thread;
-        size_t old_num_bins = num_bins; // Freeze this
+        size_t old_num_bins = *num_bins; // Freeze num_bins for the for loop
 
         // Constrain all the old bins
         // All new bins must not be overfull
@@ -325,15 +337,16 @@ kernelWalkPack() {
 
             // If bin is overfull, allocate a new bin
             while (bin->occupancy > bin_size) {
-                if (num_bins >= maxsize - 1) {
-                    *dev_retval_pt = -1;
+
+                // Requires atomic add, but very low contention
+                size_t new_bin_idx = atomicAdd(num_bins, 1);
+
+                if (new_bin_idx >= maxsize) {
+                    *num_bins = -1;
                     printf("Too many bins\n");
                     return;
                 }
 
-                // Requires atomic add, but very low contention
-                size_t new_bin_idx =
-                  atomicAdd((unsigned long long int *)(&num_bins), 1); // TODO may need to allocate num_bins with cudaMallocManaged
                 newbin = &bins[new_bin_idx];
                 *newbin = dev_bin(0);
 
@@ -361,7 +374,7 @@ kernelWalkPack() {
     if(thread_id == 0){
         size_t out_idx = 0;
         size_t bi;
-        for(bi = 0; bi < num_bins; bi++){
+        for(bi = 0; bi < *num_bins; bi++){
             idx_out[bi] = out_idx;
             for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
                 obj_out[out_idx] = bins[bi].obj_list.arr[oi];
@@ -370,13 +383,13 @@ kernelWalkPack() {
         }
         idx_out[bi] = out_idx;
 
-        for (size_t j = 0; j < num_bins; j++) {
+        for (size_t j = 0; j < *num_bins; j++) {
             check_bin(&bins[j], bin_size);
         }
 
         // Return the number of bins
-        *dev_retval_pt = num_bins;
-        printf("Num bins: %i\n", num_bins);
+        //*dev_retval_pt = num_bins;
+        printf("Num bins: %i\n", *num_bins);
     }
 
     __syncthreads();
@@ -406,18 +419,20 @@ void runBFD(){
     // Allocate space on device
     gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
-    dev_retval_pt = p.dev_retval_pt;
-
+    gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
+    gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
+    gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
     // Run BFD
     kernelBFD<<<1,1>>>();
     cudaThreadSynchronize();
+    dev_retval_pt = p.dev_retval_pt;
+    obj_out = p.obj_out;
+    idx_out = p.idx_out;
 
     // Copy back number of bins
-    cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost));
     if (host_retval < 0) {
         cout << "CUDA kernel failed to pack bins\n";
     }
@@ -425,20 +440,20 @@ void runBFD(){
     bins_out = new bin[host_num_bins];
 
     // Copy the representation of objs in bins to host
-    size_t *host_idxs = new size_t[host_num_bins+1];
-    obj *host_objs = new obj[host_num_objs];
-    cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
-               cudaMemcpyDeviceToHost);
-    cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj),
-               cudaMemcpyDeviceToHost);
+    size_t host_idxs[host_num_bins+1];
+    obj host_objs[host_num_objs];
+    gpuErrchk(cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
+               cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj),
+               cudaMemcpyDeviceToHost));
 
     // Create a vector with these objects
     for (size_t bi = 0; bi < host_num_bins; bi++) {
-        bin *b = new bin;
+        bin  b;
         for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
-          b->obj_list.push_back(host_objs[oi]);
+          b.obj_list.push_back(host_objs[oi]);
         }
-        bins_out[bi] = *b;
+        bins_out[bi] = b;
     }
 }
 
@@ -464,13 +479,13 @@ void run() {
     p.maxsize = maxsize;
 
     // Allocate space on device
-    gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
+    gpuErrchk(cudaMallocManaged(&p.dev_retval_pt, sizeof(int))); // Need managed memory for atomic add
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
-    dev_retval_pt = p.dev_retval_pt;
-
+    gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
+    gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
+    gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
+
 
     // Run WalkPack
     int trials = 1;
@@ -480,9 +495,12 @@ void run() {
 
     kernelWalkPack<<<walkpack_grid_dim, walkpack_block_dim>>>();
     cudaThreadSynchronize();
+    dev_retval_pt = p.dev_retval_pt;
+    obj_out = p.obj_out;
+    idx_out = p.idx_out;
 
     // Copy back number of bins
-    cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost));
     if (host_retval < 0) {
         cout << "CUDA kernel failed to pack bins\n";
     }
@@ -490,19 +508,19 @@ void run() {
     bins_out = new bin[host_num_bins];
 
     // Copy the representation of objs in bins to host
-    size_t *host_idxs = new size_t[host_num_bins+1];
-    obj *host_objs = new obj[host_num_objs];
-    cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
-               cudaMemcpyDeviceToHost);
-    cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj),
-               cudaMemcpyDeviceToHost);
+    size_t host_idxs[host_num_bins+1];
+    obj host_objs[host_num_objs];
+    gpuErrchk(cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
+               cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj),
+               cudaMemcpyDeviceToHost));
 
     // Create a vector with these objects
     for (size_t bi = 0; bi < host_num_bins; bi++) {
-        bin *b = new bin;
+        bin  b;
         for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
-          b->obj_list.push_back(host_objs[oi]);
+          b.obj_list.push_back(host_objs[oi]);
         }
-        bins_out[bi] = *b;
+        bins_out[bi] = b;
     }
 }

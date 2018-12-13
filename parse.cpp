@@ -47,10 +47,9 @@ bool dump(char *outfile) {
         obj_data["objs"][i] = host_objs[i].size;
     }
     for(uint32_t i = 0; i < (uint32_t) host_num_bins; i++) {
-        bin bin = bins_out[i];
         obj_data["bins"][i] = Json::Value(Json::arrayValue);
-        for (uint32_t j = 0; j < bin.obj_list.size(); j++) {
-            obj_data["bins"][i][j] = bin.obj_list[j].size;
+        for (uint32_t j = 0; j < bins_out[i].obj_list.size(); j++) {
+            obj_data["bins"][i][j] = bins_out[i].obj_list[j].size;
         }
     }
     if (outfile==NULL) { //print results to stdout
