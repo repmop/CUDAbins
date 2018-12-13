@@ -132,6 +132,10 @@ struct dev_bin {
         occupancy = 0;
         obj_list = ghetto_vec<obj> (0);
     }
+    __device__
+    operator uint32_t () {
+        return occupancy;
+    }
 };
 
 struct bin {
@@ -180,6 +184,43 @@ struct cudaGlobals {
     __device__
     uint32_t rand_i() {
         return curand(&s);
+    }
+};
+
+struct fc_op : public thrust::binary_function<int,int,float>
+{
+    __device__
+    fc_op(int dummy) {}
+    __device__
+    float operator()(int x, int y) {
+        // printf("x: %i, y: %i\n", x, y);
+        return ((float) x) + ((float) y);
+    }
+};
+
+struct ec_op : public thrust::binary_function<int,int,float>
+{
+    int bin_size;
+    __device__
+    ec_op(int bs) {
+        bin_size = bs;
+    }
+    __device__
+    float operator()(int x, int y) {
+        return ((float) x + (bin_size - y));
+    }
+};
+
+struct div_op : public thrust::unary_function<float,float>
+{
+    int divend;
+    __device__
+    div_op(int div) {
+        divend = div;
+    }
+    __device__
+    float operator()(float x) {
+        return x / divend;
     }
 };
 

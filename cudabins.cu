@@ -78,28 +78,37 @@ uint32_t rand_full(){
     return fcdfs.upper_bound(globals.rand_f() / RAND_MAX - fcdfs[0]);
 }
 
+
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
 void setup_rand(){
     int num_bins = globals.num_bins;
     dev_bin *bins = globals.bins;
-    ghetto_vec<float> ecdfs = globals.ecdfs;
-    ghetto_vec<float> fcdfs = globals.fcdfs;
+    ghetto_vec<float> &ecdfs = globals.ecdfs;
+    ghetto_vec<float> &fcdfs = globals.fcdfs;
 
     ecdfs.resize(num_bins);
     fcdfs.resize(num_bins);
     int bin_size = params.bin_size;
     int total_obj_size = params.total_obj_size;
-
     float sum_empty_space = (float)(num_bins * bin_size - total_obj_size);
-    float ecdf = 0.f;
-    float fcdf = 0.f;
-    for(uint32_t i = 0; i < num_bins; i++){
-        ecdf += ((float) (bin_size - bins[i].occupancy)) / sum_empty_space;
-        ecdfs[i] = ecdf;
-        fcdf += ((float) bins[i].occupancy) / total_obj_size;
-        fcdfs[i] = fcdf;
-    }
+
+    fc_op thrust_operator(0); //need a dummy constructor
+
+    ec_op thrust_operator_ec(bin_size);
+
+    div_op ec_div(sum_empty_space);
+
+    div_op fc_div(total_obj_size);
+
+    thrust::exclusive_scan(thrust::cuda::par, bins, &bins[num_bins],
+                           &fcdfs[0], 0.f, thrust_operator);
+    thrust::exclusive_scan(thrust::cuda::par, bins, &bins[num_bins],
+                           &ecdfs[0], 0.f, thrust_operator_ec);
+    thrust::transform(thrust::cuda::par, &fcdfs[0], &fcdfs[num_bins],
+                      &fcdfs[0], fc_div);
+    thrust::transform(thrust::cuda::par, &ecdfs[0], &ecdfs[num_bins],
+                      &ecdfs[0], ec_div);
 }
 
 // Fill bins using next-fit
@@ -155,10 +164,9 @@ kernelBFD() {
     size_t *idx_out = params.idx_out;
 
     globals = cudaGlobals(maxsize);
-    setup_rand();
 
-    dev_bin *bins = globals.bins;
-    size_t num_bins = globals.num_bins;
+    dev_bin *&bins = globals.bins;
+    size_t &num_bins = globals.num_bins;
 
     // Sort objects decreasing
     thrust::sort(cuda::par, objs, &objs[num_objs],
@@ -215,6 +223,9 @@ kernelBFD() {
     for (size_t j = 0; j < num_bins; j++) {
         check_bin(&bins[j], bin_size);
     }
+
+    setup_rand();
+
 
     // Return the number of bins
     *dev_retval_pt = (int) num_bins;
