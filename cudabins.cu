@@ -396,15 +396,8 @@ kernelWalkPack() {
     return;
 }
 
-
-void runBFD(){
-    //Inputs
-    cudaParams p;
-
-    // Outputs
-    obj *obj_out;
-    size_t *idx_out;
-    int *dev_retval_pt, host_retval, maxsize;
+void setup(cudaParams& p) {
+    int maxsize;
 
     // Calculate a high water mark for number of bins used
     maxsize = calculate_maxsize();
@@ -417,16 +410,19 @@ void runBFD(){
     p.maxsize = maxsize;
 
     // Allocate space on device
-    gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
+    gpuErrchk(cudaMallocManaged(&p.dev_retval_pt, sizeof(int))); // Need managed memory for atomic add
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
     gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
+}
 
-    // Run BFD
-    kernelBFD<<<1,1>>>();
-    cudaThreadSynchronize();
+void cleanup(cudaParams& p) {
+    // Outputs
+    obj *obj_out;
+    size_t *idx_out;
+    int *dev_retval_pt, host_retval;
     dev_retval_pt = p.dev_retval_pt;
     obj_out = p.obj_out;
     idx_out = p.idx_out;
@@ -457,35 +453,26 @@ void runBFD(){
     }
 }
 
+void runBFD(){
+    //Inputs
+    cudaParams p;
+
+    setup(p);
+
+    // Run BFD
+    kernelBFD<<<1,1>>>();
+    cudaThreadSynchronize();
+
+    cleanup(p);
+}
+
 
 __host__
 void run() {
     //Inputs
     cudaParams p;
 
-    // Outputs
-    obj *obj_out;
-    size_t *idx_out;
-    int *dev_retval_pt, host_retval, maxsize;
-
-    // Calculate a high water mark for number of bins used
-    maxsize = calculate_maxsize();
-    cout << "Max number of bins " << maxsize << std::endl;
-
-    // Assign parameters for device
-    p.total_obj_size = host_total_obj_size;
-    p.bin_size = host_bin_size;
-    p.num_objs = host_num_objs;
-    p.maxsize = maxsize;
-
-    // Allocate space on device
-    gpuErrchk(cudaMallocManaged(&p.dev_retval_pt, sizeof(int))); // Need managed memory for atomic add
-    gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
-    gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
-
+    setup(p);
 
     // Run WalkPack
     int trials = 1;
@@ -495,32 +482,6 @@ void run() {
 
     kernelWalkPack<<<walkpack_grid_dim, walkpack_block_dim>>>();
     cudaThreadSynchronize();
-    dev_retval_pt = p.dev_retval_pt;
-    obj_out = p.obj_out;
-    idx_out = p.idx_out;
 
-    // Copy back number of bins
-    gpuErrchk(cudaMemcpy(&host_retval, dev_retval_pt, sizeof(int), cudaMemcpyDeviceToHost));
-    if (host_retval < 0) {
-        cout << "CUDA kernel failed to pack bins\n";
-    }
-    host_num_bins = host_retval;
-    bins_out = new bin[host_num_bins];
-
-    // Copy the representation of objs in bins to host
-    size_t host_idxs[host_num_bins+1];
-    obj host_objs[host_num_objs];
-    gpuErrchk(cudaMemcpy(host_idxs, idx_out, (host_num_bins + 1) * sizeof(size_t),
-               cudaMemcpyDeviceToHost));
-    gpuErrchk(cudaMemcpy(host_objs, obj_out, (host_num_objs) * sizeof(obj),
-               cudaMemcpyDeviceToHost));
-
-    // Create a vector with these objects
-    for (size_t bi = 0; bi < host_num_bins; bi++) {
-        bin  b;
-        for(size_t oi = host_idxs[bi]; oi < host_idxs[bi + 1]; oi++){
-          b.obj_list.push_back(host_objs[oi]);
-        }
-        bins_out[bi] = b;
-    }
+    cleanup(p);
 }
