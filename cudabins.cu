@@ -105,6 +105,8 @@ void setup_rand(){
 // Fill bins using next-fit
 __device__
 void runNF () {
+    printf("Starting NF\n");
+
     obj *objs = params.objs;
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
@@ -117,8 +119,9 @@ void runNF () {
     size_t bi = 0; // Index of last valid bin
     dev_bin *b = &(bins[bi]);
 
-    for (size_t oi = 0; oi < num_objs; oi++) {
+    for(size_t oi = 0; oi < num_objs; oi++){
         obj *o = &objs[oi];
+
         if(b->occupancy + o->size > bin_size){
             // Move to a new bin (space is already allocated)
             bi++;
@@ -130,11 +133,13 @@ void runNF () {
             b = &(bins[bi]);
             *b = dev_bin(0);
         }
+
         b->obj_list.push_back(*o);
+        b->occupancy += o->size;
     }
 
     *num_bins = bi + 1;
-
+    printf("NF done with %lu bins\n", *num_bins);
     return;
 }
 
@@ -228,6 +233,7 @@ kernelWalkPack() {
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
     int *dev_retval_pt = params.dev_retval_pt;
+    *dev_retval_pt = 42;
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
 
@@ -239,17 +245,21 @@ kernelWalkPack() {
     __syncthreads();
 
     dev_bin *bins = globals.bins;
-    size_t num_bins = globals.num_bins; // TODO: update globals
 
     // Start with next fit
     if(thread_id == 0){
         runNF();
+    }
 
-        if(globals.num_bins >= maxsize){
-            *dev_retval_pt = -1;
+    size_t num_bins = globals.num_bins; // TODO: update globals
+    printf("Using %lu bins\n", num_bins);
+
+    if(num_bins >= maxsize){
+        *dev_retval_pt = -1;
+        if(thread_id == 0)
             printf("Next Fit failed\n");
-            return;
-        }
+
+        return;
     }
 
     __syncthreads();
@@ -333,7 +343,8 @@ kernelWalkPack() {
 
                 // Requires atomic add, but very low contention
                 size_t new_bin_idx =
-                  atomicAdd((unsigned long long int *)(&num_bins), 1); // TODO may need to allocate num_bins with cudaMallocManaged
+                    num_bins++;
+                    //atomicAdd((unsigned long long int *)(&num_bins), 1); // TODO may need to allocate num_bins with cudaMallocManaged
                 newbin = &bins[new_bin_idx];
                 *newbin = dev_bin(0);
 
@@ -468,8 +479,8 @@ void run() {
     // Allocate space on device
     gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&obj_out, host_num_objs * sizeof(obj)));
-    gpuErrchk(cudaMalloc(&idx_out, host_num_objs * sizeof(size_t)));
+    gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
+    gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
     gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
 
