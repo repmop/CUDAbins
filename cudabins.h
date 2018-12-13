@@ -136,7 +136,7 @@ struct dev_bin {
 
 struct bin {
   uint32_t occupancy;
-  thrust::host_vector<obj> obj_list;
+  std::vector<obj> obj_list;
   alias alias;
   __host__ ~bin() {}
 };
