@@ -27,8 +27,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 __constant__ cudaParams params;
-__device__ cudaGlobals globals;
-
 
 uint32_t host_num_bins;
 
@@ -69,26 +67,26 @@ void host_check_bin(bin *b, size_t bin_size) {
 // Select a random bin weighted in favor of empty bins. Uses data structures
 //  generated in setup_rand, which may be stale.
 __device__
-uint32_t rand_empty(){
-    ghetto_vec<float> ecdfs = globals.ecdfs;
-    return ecdfs.upper_bound(globals.rand_f() / RAND_MAX - ecdfs[0]);
+uint32_t rand_empty(cudaGlobals *globals){
+    ghetto_vec<float> ecdfs = globals->ecdfs;
+    return ecdfs.upper_bound(globals->rand_f() / RAND_MAX - ecdfs[0]);
 }
 
 // Select a random bin weighted in favor of full bins.
 __device__
-uint32_t rand_full(){
-    ghetto_vec<float> fcdfs = globals.fcdfs;
-    return fcdfs.upper_bound(globals.rand_f() / RAND_MAX - fcdfs[0]);
+uint32_t rand_full(cudaGlobals *globals){
+    ghetto_vec<float> fcdfs = globals->fcdfs;
+    return fcdfs.upper_bound(globals->rand_f() / RAND_MAX - fcdfs[0]);
 }
 
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
-void setup_rand(){
-    int num_bins = globals.num_bins;
-    dev_bin *bins = globals.bins;
-    ghetto_vec<float> &ecdfs = globals.ecdfs;
-    ghetto_vec<float> &fcdfs = globals.fcdfs;
+void setup_rand(cudaGlobals *globals){
+    int num_bins = globals->num_bins;
+    dev_bin *bins = globals->bins;
+    ghetto_vec<float> &ecdfs = globals->ecdfs;
+    ghetto_vec<float> &fcdfs = globals->fcdfs;
 
     ecdfs.resize(num_bins);
     fcdfs.resize(num_bins);
@@ -116,16 +114,16 @@ void setup_rand(){
 
 // Fill bins using next-fit
 __device__
-void runNF () {
+void runNF (cudaGlobals *globals) {
     printf("Starting NF\n");
 
     obj *objs = params.objs;
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
     int maxsize = params.maxsize;
-    size_t *num_bins = &globals.num_bins;
+    size_t *num_bins = &(globals->num_bins);
 
-    dev_bin *bins = globals.bins;
+    dev_bin *bins = globals->bins;
 
     // Start by allocating first bin
     size_t bi = 0; // Index of last valid bin
@@ -166,7 +164,7 @@ kernelBFD() {
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
 
-    globals = cudaGlobals(maxsize);
+    cudaGlobals globals = cudaGlobals(maxsize);
 
     dev_bin *&bins = globals.bins;
     size_t &num_bins = globals.num_bins;
@@ -227,7 +225,7 @@ kernelBFD() {
       check_bin(&bins[j], bin_size, __LINE__);
     }
 
-    setup_rand();
+    setup_rand(&globals);
 
 
     // Return the number of bins
@@ -243,33 +241,44 @@ kernelWalkPack() {
     // ID of thread within this trial. Trials are mapped to blocks,
     //  so thread_id does not depend on blockIdx
     int thread_id = threadIdx.x;
+    int trial_id = blockIdx.x;
+    printf("Hello from trial %d, thread %d\n", trial_id, thread_id);
 
+    // Read params
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
-    int *num_bins = params.dev_retval_pt; // Managed memory for atomic add
-
+    int *dev_retval_pt = params.dev_retval_pt;
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
 
+    // Every trial has its own globals, num_bins, and bins array
+    __shared__ cudaGlobals globals;
+    __shared__ size_t num_bins;
+    __shared__ dev_bin bins[1000]; // TODO this is bad
+
     if(thread_id == 0){
-        // TODO: will this work?
-        globals = cudaGlobals(maxsize);
+        globals = cudaGlobals(maxsize, trial_id);
+        num_bins = 0;
     }
+
+
     // TODO: necessary? unlikely
     __syncthreads();
 
-    dev_bin *bins = globals.bins;
+    //dev_bin *bins = globals.bins;
 
     // Start with next fit
     if(thread_id == 0){
-        runNF();
+        runNF(&globals);
+        num_bins = globals.num_bins; // TODO: propagate updates to globals. not really necessary at this point though
+
+        // Copy results of NF into shared buffer. TODO do this in parallel
+        for(size_t i = 0; i < num_bins; i++)
+            bins[i] = globals.bins[i];
     }
 
-    // A little hacky
-    *num_bins = globals.num_bins; // TODO: update globals
-
-    if(*num_bins >= maxsize){
-        *num_bins = -1;
+    if(num_bins >= maxsize){
+        *dev_retval_pt = -1;
         if(thread_id == 0)
             printf("Next Fit failed\n");
 
@@ -283,14 +292,15 @@ kernelWalkPack() {
     for(int pass = 0; pass < passes; pass++){
 
         // Optimize
-        if (*num_bins <= 1) {
-            printf("breaking\n");
+        if (num_bins <= 1) {
+            printf("Optimized to %d bins at the start of pass %d, breaking\n",
+                   num_bins, pass);
             break;
         }
 
         size_t src;
         do {
-            src = globals.rand_i() % *num_bins;
+            src = globals.rand_i() % num_bins;
         } while (!bins[src].valid);
         dev_bin *srcbin = &bins[src];
 
@@ -304,7 +314,7 @@ kernelWalkPack() {
 
                 for(int j = 0; j < retries; j++){
                     // Choose a destination other than the src
-                    while(src == (dest = globals.rand_i() % *num_bins));
+                    while(src == (dest = globals.rand_i() % num_bins));
                     // while(src == (dest = rand_full()));
 
                     if(bins[dest].occupancy + obj_size <= bin_size){
@@ -320,10 +330,10 @@ kernelWalkPack() {
             // Delete srcbin
             // bins.erase(bins.begin() + src);
             // srcbin->valid = false;
-            for(size_t i = src; i < *num_bins; i++){
+            for(size_t i = src; i < num_bins; i++){
                 bins[i] = bins[i+1];
             }
-            (*num_bins)--;
+            num_bins--;
         }
         __syncthreads();
 
@@ -337,10 +347,10 @@ kernelWalkPack() {
         // }
 
         // Constrain
-        size_t bins_per_thread = (*num_bins + blockDim.x - 1) / blockDim.x;
+        size_t bins_per_thread = (num_bins + blockDim.x - 1) / blockDim.x;
         size_t start_bin = thread_id * bins_per_thread;
         size_t end_bin = (thread_id + 1) * bins_per_thread;
-        size_t old_num_bins = *num_bins; // Freeze num_bins for the for loop
+        size_t old_num_bins = num_bins; // Freeze num_bins for the for loop
 
         // Constrain all the old bins
         // All new bins must not be overfull
@@ -352,10 +362,11 @@ kernelWalkPack() {
             while (bin->occupancy > bin_size) {
 
                 // Requires atomic add, but very low contention
-                size_t new_bin_idx = atomicAdd(num_bins, 1);
+                size_t new_bin_idx =
+                    atomicAdd((unsigned long long int *)(&num_bins), 1);
 
                 if (new_bin_idx >= maxsize) {
-                    *num_bins = -1;
+                    *dev_retval_pt = -1;
                     printf("Too many bins\n");
                     return;
                 }
@@ -388,7 +399,7 @@ kernelWalkPack() {
     if(thread_id == 0){
         size_t out_idx = 0;
         size_t bi;
-        for(bi = 0; bi < *num_bins; bi++){
+        for(bi = 0; bi < num_bins; bi++){
             idx_out[bi] = out_idx;
             for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
                 obj_out[out_idx] = bins[bi].obj_list.arr[oi];
@@ -397,13 +408,13 @@ kernelWalkPack() {
         }
         idx_out[bi] = out_idx;
 
-        for (size_t j = 0; j < *num_bins; j++) {
+        for (size_t j = 0; j < num_bins; j++) {
           check_bin(&bins[j], bin_size, __LINE__);
         }
 
         // Return the number of bins
         //*dev_retval_pt = num_bins;
-        printf("Num bins: %i\n", *num_bins);
+        printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
     }
 
     __syncthreads();
@@ -493,7 +504,7 @@ void run() {
     setup(p);
 
     // Run WalkPack
-    int trials = 1;
+    int trials = 8;
     int threads_per_trial = 1;
     dim3 walkpack_block_dim(threads_per_trial, 1);
     dim3 walkpack_grid_dim (trials, 1);

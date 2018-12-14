@@ -167,7 +167,7 @@ struct cudaGlobals {
     __device__
     cudaGlobals() {}
     __device__
-    cudaGlobals(int maxsize) {
+    cudaGlobals(int maxsize, int seed) {
         bins = (dev_bin *) malloc(sizeof(dev_bin) * maxsize);
         for (int i = 0; i < maxsize; i++) {
             bins[i] = dev_bin(0); //dummy variable in constructor
@@ -175,7 +175,11 @@ struct cudaGlobals {
         ecdfs = ghetto_vec<float> (0);
         fcdfs = ghetto_vec<float> (0);
         num_bins = 0;
-        curand_init(SEED, 0, 0, &s);
+        curand_init(seed, 0, 0, &s);
+    }
+    __device__
+    cudaGlobals(int maxsize) {
+        cudaGlobals(maxsize, SEED);
     }
 
     __device__
