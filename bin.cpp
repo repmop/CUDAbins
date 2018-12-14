@@ -262,6 +262,11 @@ void optimize() {
 
 // Fill bins using best-fit decreasing
 void runBFD() {
+    objs = host_objs;
+    num_objs = host_num_objs;
+    bin_size = host_bin_size;
+    total_obj_size = host_total_obj_size;
+
     sort(objs, &objs[num_objs],
         [](const obj_t &a, const obj_t &b) -> bool { return a.size > b.size; });
 
@@ -281,6 +286,9 @@ void runBFD() {
             bins.push_back(*make_bin(&obj));
         }
     }
+
+    bins_out = &bins[0];
+    host_num_bins = bins.size();
 
     return;
 }
@@ -351,4 +359,3 @@ void run() {
 
     return;
 }
-
