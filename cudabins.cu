@@ -13,6 +13,8 @@
 
 #include "cudabins.h"
 
+#define TRIALS 8
+
 using namespace std;
 using namespace thrust;
 
@@ -247,6 +249,7 @@ kernelWalkPack() {
     // Read params
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
+    size_t *trial_sizes = params.trial_sizes;
     int *dev_retval_pt = params.dev_retval_pt;
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
@@ -391,12 +394,31 @@ kernelWalkPack() {
         }
     }
 
-    // TODO: Reduce across threads to find best packing
+    printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
+
+    // TODO: parallel reduction
+    trial_sizes[trial_id] = num_bins;
+    if(trial_id == 0 && thread_id == 0){
+        int best_trial_idx = 0;
+        int best_trial_size = num_bins;
+        for(int i = 1; i < TRIALS; i++){
+            // Wait for this thread to submit a value
+            while(trial_sizes[i] == 0);
+            if(trial_sizes[i] < best_trial_size){
+                best_trial_size = trial_sizes[i];
+                best_trial_idx = i;
+            }
+        }
+        *(params.best_trial) = best_trial_idx;
+    }
+
+    // Wait for thread 0 to finish the comparison
+    while(*(params.best_trial) < 0);
 
     // Copy objects in order to obj_out
     // idx_out holds the indices into obj_out where each bin starts
-    printf("Outputting\n");
-    if(thread_id == 0){
+    if(thread_id == 0 && *(params.best_trial) == trial_id){
+        printf("Trial %d | Outputting (%lu bins)\n", trial_id, num_bins);
         size_t out_idx = 0;
         size_t bi;
         for(bi = 0; bi < num_bins; bi++){
@@ -413,8 +435,7 @@ kernelWalkPack() {
         }
 
         // Return the number of bins
-        //*dev_retval_pt = num_bins;
-        printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
+        *dev_retval_pt = num_bins;
     }
 
     __syncthreads();
@@ -423,6 +444,7 @@ kernelWalkPack() {
 
 void setup(cudaParams& p) {
     int maxsize;
+    int neg_one = -1;
 
     // Calculate a high water mark for number of bins used
     maxsize = calculate_maxsize();
@@ -437,13 +459,17 @@ void setup(cudaParams& p) {
     cout << "allocating space" << std::endl;
 
     // Allocate space on device
-    gpuErrchk(cudaMallocManaged(&p.dev_retval_pt, sizeof(int))); // Need managed memory for atomic add
+    gpuErrchk(cudaMalloc(&p.dev_retval_pt, sizeof(int)));
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
+    gpuErrchk(cudaMalloc(&p.trial_sizes, TRIALS * sizeof(size_t)));
+    gpuErrchk(cudaMalloc(&p.best_trial, sizeof(int)));
     cout << "copying inputs" << std::endl;
     gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
+    gpuErrchk(cudaMemset(p.trial_sizes, 0, TRIALS * sizeof(size_t)));
+    gpuErrchk(cudaMemcpy(p.best_trial, &neg_one, sizeof(int), cudaMemcpyHostToDevice));
     cout << "setup done" << std::endl;
 }
 
@@ -504,10 +530,9 @@ void run() {
     setup(p);
 
     // Run WalkPack
-    int trials = 8;
     int threads_per_trial = 1;
     dim3 walkpack_block_dim(threads_per_trial, 1);
-    dim3 walkpack_grid_dim (trials, 1);
+    dim3 walkpack_grid_dim (TRIALS, 1);
 
     cout << "Running kernel" << std::endl;
     kernelWalkPack<<<walkpack_grid_dim, walkpack_block_dim>>>();

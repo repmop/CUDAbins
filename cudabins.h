@@ -147,12 +147,17 @@ struct bin {
 };
 
 struct cudaParams {
+    // Inputs
     uint32_t total_obj_size;
     uint32_t bin_size;
     uint32_t num_objs;
     int maxsize;
-    int *dev_retval_pt;
     obj *objs;
+
+    // Outputs
+    size_t *trial_sizes;
+    int *best_trial;
+    int *dev_retval_pt;
     obj *obj_out;
     size_t *idx_out;
 };
@@ -167,7 +172,7 @@ struct cudaGlobals {
     __device__
     cudaGlobals() {}
     __device__
-    cudaGlobals(int maxsize, int seed) {
+    cudaGlobals(int maxsize, int seed = SEED) {
         bins = (dev_bin *) malloc(sizeof(dev_bin) * maxsize);
         for (int i = 0; i < maxsize; i++) {
             bins[i] = dev_bin(0); //dummy variable in constructor
@@ -176,10 +181,6 @@ struct cudaGlobals {
         fcdfs = ghetto_vec<float> (0);
         num_bins = 0;
         curand_init(seed, 0, 0, &s);
-    }
-    __device__
-    cudaGlobals(int maxsize) {
-        cudaGlobals(maxsize, SEED);
     }
 
     __device__
