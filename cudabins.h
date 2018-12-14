@@ -146,6 +146,11 @@ struct bin {
   __host__ ~bin() {}
 };
 
+struct size_idx_pair {
+    size_t num_bins;
+    int index;
+};
+
 struct cudaParams {
     // Inputs
     uint32_t total_obj_size;
@@ -154,9 +159,11 @@ struct cudaParams {
     int maxsize;
     obj *objs;
 
-    // Outputs
-    size_t *trial_sizes;
+    // Scratch
+    size_idx_pair *trial_sizes;
     int *best_trial;
+
+    // Outputs
     int *dev_retval_pt;
     obj *obj_out;
     size_t *idx_out;

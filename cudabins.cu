@@ -249,7 +249,7 @@ kernelWalkPack() {
     // Read params
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
-    size_t *trial_sizes = params.trial_sizes;
+    size_idx_pair *trial_sizes = params.trial_sizes;
     int *dev_retval_pt = params.dev_retval_pt;
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
@@ -396,8 +396,43 @@ kernelWalkPack() {
 
     printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
 
-    // TODO: parallel reduction
-    trial_sizes[trial_id] = num_bins;
+    // Parallel reduction
+    if(thread_id == 0){
+        // Level 0: all threads write num_bins to [0, TRIALS)
+        trial_sizes[trial_id].num_bins = num_bins;
+        trial_sizes[trial_id].index = trial_id;
+
+        // Level i: thread_id % 2^i == 0 write
+        int base_idx = 0;
+        int level = 1;
+        size_t min_bins = num_bins;
+        int min_idx = trial_id;
+
+        while(trial_id % (1 << level) == 0 && (1 << level) <= TRIALS){
+            // Wait for paired thread to submit a value
+            int pair_idx = base_idx + (trial_id >> (level - 1)) + 1;
+            while(trial_sizes[pair_idx].num_bins == 0);
+
+            if(trial_sizes[pair_idx].num_bins < min_bins){
+                min_bins = trial_sizes[pair_idx].num_bins;
+                min_idx = trial_sizes[pair_idx].index;
+            }
+
+            // Write to new location
+            base_idx += TRIALS >> (level - 1);
+            trial_sizes[base_idx + trial_id / (1 << level)].num_bins = min_bins;
+            trial_sizes[base_idx + trial_id / (1 << level)].index = min_idx;
+            level++;
+        }
+
+        if(trial_id == 0){
+            *(params.best_trial) = min_idx;
+        }
+    }
+
+
+    // Sequential reduction
+    /*
     if(trial_id == 0 && thread_id == 0){
         int best_trial_idx = 0;
         int best_trial_size = num_bins;
@@ -410,7 +445,7 @@ kernelWalkPack() {
             }
         }
         *(params.best_trial) = best_trial_idx;
-    }
+    } */
 
     // Wait for thread 0 to finish the comparison
     while(*(params.best_trial) < 0);
@@ -463,12 +498,12 @@ void setup(cudaParams& p) {
     gpuErrchk(cudaMalloc(&p.objs, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.obj_out, host_num_objs * sizeof(obj)));
     gpuErrchk(cudaMalloc(&p.idx_out, host_num_objs * sizeof(size_t)));
-    gpuErrchk(cudaMalloc(&p.trial_sizes, TRIALS * sizeof(size_t)));
+    gpuErrchk(cudaMalloc(&p.trial_sizes, 2 * TRIALS * sizeof(size_idx_pair)));
     gpuErrchk(cudaMalloc(&p.best_trial, sizeof(int)));
     cout << "copying inputs" << std::endl;
     gpuErrchk(cudaMemcpy(p.objs, host_objs, host_num_objs * sizeof(obj), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpyToSymbol(params, &p, sizeof(cudaParams)));
-    gpuErrchk(cudaMemset(p.trial_sizes, 0, TRIALS * sizeof(size_t)));
+    gpuErrchk(cudaMemset(p.trial_sizes, 0, 2 * TRIALS * sizeof(size_idx_pair)));
     gpuErrchk(cudaMemcpy(p.best_trial, &neg_one, sizeof(int), cudaMemcpyHostToDevice));
     cout << "setup done" << std::endl;
 }
