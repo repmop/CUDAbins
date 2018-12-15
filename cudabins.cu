@@ -302,6 +302,7 @@ void kernelWalkPack() {
         //     bins[i] = globals.bins[i];
     }
 
+
     if(num_bins >= maxsize){
         *dev_retval_pt = -1;
         if(thread_id == 0)
@@ -379,7 +380,9 @@ void kernelWalkPack() {
 
         // Constrain all the old bins
         // All new bins must not be overfull
-        for (size_t i = start_bin; i < end_bin && i < old_num_bins; i++) {
+        if(thread_id == 0){
+        for (size_t i = 0; i < old_num_bins; i++) {
+          //for (size_t i = start_bin; i < end_bin && i < old_num_bins; i++) {
             dev_bin *bin = &bins[i];
             dev_bin *newbin;
 
@@ -413,6 +416,7 @@ void kernelWalkPack() {
                 //  constrain the new bin if it needs
                 bin = newbin;
             }
+        }
         }
     }
 
@@ -564,7 +568,7 @@ void run() {
     setup(p);
 
     // Run WalkPack
-    int threads_per_trial = 1;
+    int threads_per_trial = 4;
     dim3 walkpack_block_dim(threads_per_trial, 1);
     dim3 walkpack_grid_dim (TRIALS, 1);
 
