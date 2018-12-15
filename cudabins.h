@@ -30,11 +30,6 @@ struct ghetto_vec {
     }
 
     __device__
-    void clear() {
-        num_entries = 0;
-    }
-
-    __device__
     void push_back (const T& val) {
         if (num_entries + 1 >= maxlen) {
             T *old = arr;
@@ -106,6 +101,10 @@ struct ghetto_vec {
 
         return hi;
     }
+    __device__
+    void clear() {
+        delete [] arr;
+    }
 
 };
 
@@ -136,6 +135,10 @@ struct dev_bin {
     __device__
     operator uint32_t () {
         return occupancy;
+    }
+    __device__
+    void clear() {
+        obj_list.clear();
     }
 };
 
@@ -175,6 +178,7 @@ struct cudaGlobals {
     ghetto_vec<float> fcdfs;
     size_t num_bins;
     curandState s;
+    int saved_maxsize;
 
     __device__
     cudaGlobals() {}
@@ -188,6 +192,7 @@ struct cudaGlobals {
         fcdfs = ghetto_vec<float> (0);
         num_bins = 0;
         curand_init(seed, 0, 0, &s);
+        saved_maxsize = maxsize;
     }
 
     __device__
@@ -197,6 +202,16 @@ struct cudaGlobals {
     __device__
     uint32_t rand_i() {
         return curand(&s);
+    }
+
+    __device__
+    void clear() {
+        for (int i = 0; i < saved_maxsize; i++) {
+            bins[i].clear();
+        }
+        ecdfs.clear();
+        fcdfs.clear();
+        free(bins);
     }
 };
 

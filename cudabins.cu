@@ -65,19 +65,33 @@ void host_check_bin(bin *b, size_t bin_size) {
     assert(b->occupancy <= bin_size);
 }
 
+template<typename T>
+__device__ __inline__
+T clamp(T x, T lower, T upper) {
+    if (x >= lower && x <= upper) {
+        return x;
+    }
+    if (x < lower) {
+        return lower;
+    }
+    return upper;
+}
+
 // Select a random bin weighted in favor of empty bins. Uses data structures
 //  generated in setup_rand, which may be stale.
 __device__
 uint32_t rand_empty(cudaGlobals *globals){
     ghetto_vec<float> ecdfs = globals->ecdfs;
-    return ecdfs.upper_bound(globals->rand_f() / RAND_MAX - ecdfs[0]);
+    uint32_t ret = ecdfs.upper_bound(globals->rand_f() / RAND_MAX - ecdfs[0]);
+    return clamp (ret, 0U, (uint32_t) globals->num_bins - 1);
 }
 
 // Select a random bin weighted in favor of full bins.
 __device__
 uint32_t rand_full(cudaGlobals *globals){
     ghetto_vec<float> fcdfs = globals->fcdfs;
-    return fcdfs.upper_bound(globals->rand_f() / RAND_MAX - fcdfs[0]);
+    uint32_t ret = fcdfs.upper_bound(globals->rand_f() / RAND_MAX - fcdfs[0]);
+    return clamp (ret, 0U, (uint32_t) globals->num_bins - 1);
 }
 
 
@@ -155,8 +169,8 @@ void runNF (cudaGlobals *globals) {
 }
 
 
-__global__ void
-kernelBFD() {
+__global__
+void kernelBFD() {
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
     int maxsize = params.maxsize;
@@ -200,21 +214,6 @@ kernelBFD() {
             check_bin(bin, bin_size, __LINE__);
         }
 
-        // Sequential search through existing bins for space
-        //  and place object in bin if found
-        /*
-        for (size_t j = 0; j < num_bins; j++) {
-            dev_bin *bin = &bins[j];
-            if (bin->occupancy + obj.size <= bin_size) {
-                bin->occupancy += obj.size;
-                bin->obj_list.push_back(obj);
-                found_fit_flag = true;
-                break;
-            }
-            check_bin(bin, bin_size, __LINE__);
-        }
-        */
-
         // If you don't find any, make a new bin
         if (!found_fit_flag) {
             if (num_bins >= maxsize - 1) {
@@ -251,19 +250,20 @@ kernelBFD() {
       check_bin(&bins[j], bin_size, __LINE__);
     }
 
-    setup_rand(&globals);
-
-
     // Return the number of bins
     *dev_retval_pt = (int) num_bins;
     printf("Finished, Num bins: %i\n", num_bins);
+
+    delete[] indices;
+
+    globals.clear();
 
     return;
 }
 
 
-__global__ void
-kernelWalkPack() {
+__global__
+void kernelWalkPack() {
     // ID of thread within this trial. Trials are mapped to blocks,
     //  so thread_id does not depend on blockIdx
     int thread_id = threadIdx.x;
@@ -291,8 +291,6 @@ kernelWalkPack() {
 
     // TODO: necessary? unlikely
     __syncthreads();
-
-    //dev_bin *bins = globals.bins;
 
     // Start with next fit
     if(thread_id == 0){
@@ -342,7 +340,7 @@ kernelWalkPack() {
                 for(int j = 0; j < retries; j++){
                     // Choose a destination other than the src
                     while(src == (dest = globals.rand_i() % num_bins));
-                    // while(src == (dest = rand_full()));
+                    // while(src == (dest = rand_full(&globals)));
 
                     if(bins[dest].occupancy + obj_size <= bin_size){
                         break;
@@ -355,8 +353,6 @@ kernelWalkPack() {
             }
 
             // Delete srcbin
-            // bins.erase(bins.begin() + src);
-            // srcbin->valid = false;
             for(size_t i = src; i < num_bins; i++){
                 bins[i] = bins[i+1];
             }
@@ -497,6 +493,9 @@ kernelWalkPack() {
         *dev_retval_pt = num_bins;
     }
 
+    if(thread_id == 0){
+        globals.clear();
+    }
     __syncthreads();
     return;
 }
