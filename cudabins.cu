@@ -13,7 +13,7 @@
 
 #include "cudabins.h"
 
-#define TRIALS 128
+#define TRIALS 1024
 
 using namespace std;
 
@@ -130,7 +130,7 @@ void setup_rand(cudaGlobals *globals){
 // Fill bins using next-fit
 __device__
 void runNF (cudaGlobals *globals) {
-    printf("Starting NF\n");
+    //printf("Starting NF\n");
 
     obj *objs = params.objs;
     int bin_size = params.bin_size;
@@ -164,7 +164,7 @@ void runNF (cudaGlobals *globals) {
     }
 
     *num_bins = bi + 1;
-    printf("NF done with %lu bins\n", *num_bins);
+    //printf("NF done with %lu bins\n", *num_bins);
     return;
 }
 
@@ -302,6 +302,8 @@ void kernelWalkPack() {
         //     bins[i] = globals.bins[i];
     }
 
+    printf("Trial %d finished NF\n", trial_id);
+
     if(num_bins >= maxsize){
         *dev_retval_pt = -1;
         if(thread_id == 0)
@@ -396,8 +398,9 @@ void kernelWalkPack() {
                     return;
                 }
 
+                // Should already be 0-initialized
                 newbin = &bins[new_bin_idx];
-                *newbin = dev_bin(0);
+                //*newbin = dev_bin(0);
 
                 // Move objects from overfull bin to new bin
                 while (bin->occupancy > bin_size) {
