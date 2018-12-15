@@ -237,6 +237,26 @@ struct div_op : public thrust::unary_function<float,float>
     }
 };
 
+struct bin_relu_op : public thrust::unary_function<dev_bin,int>
+{
+    int target_size, max_size;
+    dev_bin *base_pt;
+    __device__
+    bin_relu_op(int target, int bin_size, dev_bin *bins) {
+        target_size = target;
+        max_size = bin_size;
+        base_pt = bins;
+    }
+    __device__
+    int operator()(dev_bin b) {
+        if(b.occupancy + target_size <= max_size){
+            return (&b) - base_pt;
+        } else {
+            return INT_MAX;
+        }
+    }
+};
+
 /* Parsed Inputs */
 extern obj *host_objs;
 extern uint32_t host_num_objs;

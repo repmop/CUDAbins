@@ -16,7 +16,6 @@
 #define TRIALS 8
 
 using namespace std;
-using namespace thrust;
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -171,15 +170,46 @@ kernelBFD() {
     dev_bin *&bins = globals.bins;
     size_t &num_bins = globals.num_bins;
 
+    int *indices = new int[maxsize];
+
     // Sort objects decreasing
-    thrust::sort(cuda::par, objs, &objs[num_objs],
+    thrust::sort(thrust::cuda::par, objs, &objs[num_objs],
         [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
 
     // Put each object in the first bin it fits into
     for (size_t i = 0; i < num_objs; i++) {
         obj obj = objs[i];
-        // Scan through existing bins for space
+
         bool found_fit_flag = false;
+
+        // Parallel reduction to find minimum index that fits this bin
+        bin_relu_op bin_relu(obj.size, bin_size, bins);
+
+        printf("num_bins: %d\n", num_bins);
+        thrust::tabulate(thrust::cuda::par, indices, &indices[num_bins],
+                         bin_relu);
+        printf("Indices:");
+        for(int j = 0; j < num_bins; j++)
+            printf(" %d", indices[j]);
+        printf("\n");
+
+        int fit_idx = thrust::reduce (thrust::cuda::par, indices, &indices[num_bins],
+                                      INT_MAX, thrust::minimum<int>());
+        printf("Fit_idx: %d\n", fit_idx);
+
+        if(fit_idx < INT_MAX){
+            printf("Found a fit\n");
+            found_fit_flag = true;
+            dev_bin *bin = &bins[fit_idx];
+            bin->occupancy += obj.size;
+            bin->obj_list.push_back(obj);
+
+            check_bin(bin, bin_size, __LINE__);
+        }
+
+        // Sequential search through existing bins for space
+        //  and place object in bin if found
+        /*
         for (size_t j = 0; j < num_bins; j++) {
             dev_bin *bin = &bins[j];
             if (bin->occupancy + obj.size <= bin_size) {
@@ -190,6 +220,7 @@ kernelBFD() {
             }
             check_bin(bin, bin_size, __LINE__);
         }
+        */
 
         // If you don't find any, make a new bin
         if (!found_fit_flag) {
@@ -257,13 +288,13 @@ kernelWalkPack() {
     // Every trial has its own globals, num_bins, and bins array
     __shared__ cudaGlobals globals;
     __shared__ size_t num_bins;
-    __shared__ dev_bin bins[1000]; // TODO this is bad
 
     if(thread_id == 0){
         globals = cudaGlobals(maxsize, trial_id);
         num_bins = 0;
     }
 
+    dev_bin *bins = globals.bins;
 
     // TODO: necessary? unlikely
     __syncthreads();
