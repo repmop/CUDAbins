@@ -13,7 +13,7 @@
 
 #include "cudabins.h"
 
-#define TRIALS 1024
+#define TRIALS 128
 
 using namespace std;
 
@@ -273,7 +273,7 @@ void kernelWalkPack() {
     // Read params
     int bin_size = params.bin_size;
     int maxsize = params.maxsize;
-    size_idx_pair *trial_sizes = params.trial_sizes;
+    volatile size_idx_pair *trial_sizes = params.trial_sizes;
     int *dev_retval_pt = params.dev_retval_pt;
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
@@ -359,6 +359,7 @@ void kernelWalkPack() {
             for(size_t i = src; i < num_bins; i++){
                 bins[i] = bins[i+1];
             }
+            // Need to allocate a new bin to replace the one we deleted
             bins[num_bins-1] = dev_bin(0);
             num_bins--;
         }
@@ -398,9 +399,8 @@ void kernelWalkPack() {
                     return;
                 }
 
-                // Should already be 0-initialized
+                // All bins are already zero-initialized
                 newbin = &bins[new_bin_idx];
-                //*newbin = dev_bin(0);
 
                 // Move objects from overfull bin to new bin
                 while (bin->occupancy > bin_size) {
@@ -420,28 +420,37 @@ void kernelWalkPack() {
     }
 
     printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
-    /*
-    // Parallel reduction
+
+    // Parallel reduction across blocks
     if(thread_id == 0){
         // Level 0: all threads write num_bins to [0, TRIALS)
         trial_sizes[trial_id].num_bins = num_bins;
         trial_sizes[trial_id].index = trial_id;
 
-        // Level i: thread_id % 2^i == 0 write
         int base_idx = 0;
         int level = 1;
         size_t min_bins = num_bins;
         int min_idx = trial_id;
 
-        while(trial_id % (1 << level) == 0 && (1 << level) <= TRIALS){
+        while(//trial_id % (1 << level) == 0 &&
+              (1 << level) <= TRIALS){
             // Wait for paired thread to submit a value
-            int pair_idx = base_idx + (trial_id >> (level - 1)) + 1;
-            while(trial_sizes[pair_idx].num_bins == 0);
+            int my_idx = base_idx + (trial_id >> (level - 1));
+            int pair_idx = my_idx ^ 0x1;
 
-            if(trial_sizes[pair_idx].num_bins < min_bins){
-                min_bins = trial_sizes[pair_idx].num_bins;
-                min_idx = trial_sizes[pair_idx].index;
+            printf("trial %d (at index %d) waiting on index %d\n", trial_id, my_idx, pair_idx);
+            while(trial_sizes[pair_idx].num_bins == 0);
+            printf("trial %d (at index %d) done waiting on index %d\n", trial_id, my_idx, pair_idx);
+
+            if(trial_sizes[pair_idx].num_bins < min_bins ||
+               (trial_sizes[pair_idx].num_bins == min_bins && pair_idx < my_idx)){
+                printf("Trial %d deferring to %d\n", min_idx, trial_sizes[pair_idx].index);
+                globals.clear();
+                return;
             }
+            //     min_bins = trial_sizes[pair_idx].num_bins;
+            //     min_idx = trial_sizes[pair_idx].index;
+            // }
 
             // Write to new location
             base_idx += TRIALS >> (level - 1);
@@ -450,35 +459,12 @@ void kernelWalkPack() {
             level++;
         }
 
-        if(trial_id == 0){
-            *(params.best_trial) = min_idx;
-        }
-    }
+        printf("Trial <winner> setting best trial to %d\n", min_idx);
+        *(params.best_trial) = min_idx;
 
+        // Copy objects in order to obj_out
+        // idx_out holds the indices into obj_out where each bin starts
 
-    // Sequential reduction
-    / *
-    if(trial_id == 0 && thread_id == 0){
-        int best_trial_idx = 0;
-        int best_trial_size = num_bins;
-        for(int i = 1; i < TRIALS; i++){
-            // Wait for this thread to submit a value
-            while(trial_sizes[i] == 0);
-            if(trial_sizes[i] < best_trial_size){
-                best_trial_size = trial_sizes[i];
-                best_trial_idx = i;
-            }
-        }
-        *(params.best_trial) = best_trial_idx;
-    } * /
-
-    // Wait for thread 0 to finish the comparison
-    while(*(params.best_trial) < 0);
-    */
-    if(thread_id == 0 && trial_id == 0){
-    // Copy objects in order to obj_out
-    // idx_out holds the indices into obj_out where each bin starts
-      //    if(thread_id == 0 && *(params.best_trial) == trial_id){
         printf("Trial %d | Outputting (%lu bins)\n", trial_id, num_bins);
         size_t out_idx = 0;
         size_t bi;
@@ -492,14 +478,12 @@ void kernelWalkPack() {
         idx_out[bi] = out_idx;
 
         for (size_t j = 0; j < num_bins; j++) {
-          check_bin(&bins[j], bin_size, __LINE__);
+            check_bin(&bins[j], bin_size, __LINE__);
         }
 
         // Return the number of bins
         *dev_retval_pt = num_bins;
-    }
 
-    if(thread_id == 0){
         globals.clear();
     }
     return;
