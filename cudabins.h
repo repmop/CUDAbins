@@ -20,6 +20,8 @@ struct ghetto_vec {
         num_entries = 0;
         maxlen = DEF_ENTRIES;
         arr = new T[maxlen];
+        if(arr == NULL)
+            printf("Failed to make new arr\n");
     }
     __device__
     void erase(uint32_t ind) {
@@ -34,6 +36,9 @@ struct ghetto_vec {
         if (num_entries + 1 >= maxlen) {
             T *old = arr;
             arr = new T[maxlen * SCALE];
+            if(arr == NULL)
+                printf("push_back: Failed to make new arr\n");
+
             for (int i = 0; i < num_entries; i++) {
                 arr[i] = old[i];
             }
@@ -60,6 +65,9 @@ struct ghetto_vec {
         }
         maxlen = new_size * SCALE;
         arr = new T[maxlen];
+        if(arr == NULL)
+            printf("resize: Failed to make new arr\n");
+
         for (size_t i = 0; i < copy_size; i++) {
             arr[i] = old[i];
         }
@@ -185,8 +193,11 @@ struct cudaGlobals {
     __device__
     cudaGlobals(int maxsize, int seed = SEED) {
         bins = (dev_bin *) malloc(sizeof(dev_bin) * maxsize);
+        if(bins == NULL)
+            printf("Failed to malloc bins\n");
+
         for (int i = 0; i < maxsize; i++) {
-            bins[i] = dev_bin(0); //dummy variable in constructor
+            //bins[i] = dev_bin(0); //dummy variable in constructor
         }
         ecdfs = ghetto_vec<float> (0);
         fcdfs = ghetto_vec<float> (0);

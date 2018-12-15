@@ -15,9 +15,9 @@ ARCH=$(shell uname | sed -e 's/-.*//g')
 OBJDIR=objs
 
 CXX=g++ -m64 -std=c++11
-# CXX=g++ -m64 -std=c++11
+# CXX=g++ -m64 -std=c++11 -g -gdwarf-2
 
-CXXFLAGS=-O3 -Wall
+CXXFLAGS=-O0 -Wall
 ifeq ($(ARCH), Darwin)
 # Building on mac
 LDFLAGS=-L/usr/local/depot/cuda-8.0/lib/ -lcudart
@@ -27,10 +27,10 @@ LDFLAGS=-L/usr/local/depot/cuda-8.0/lib64/ -L/usr/local/cuda/lib64/ -lcudart
 endif
 
 
-NVCC=nvcc
-# NVCC=nvcc --compiler-options -Wall
+NVCC=nvcc --compiler-options -Wall
+# NVCC=nvcc --compiler-options -Wall --compiler-options -g --compiler-options -gdwarf-2 -G
 
-NVCCFLAGS=-O3 -m64 --gpu-architecture compute_60 -std=c++11
+NVCCFLAGS=-O0 -m64 --gpu-architecture compute_60 -std=c++11
 OBJS=$(OBJDIR)/main.o  $(OBJDIR)/bin.o $(OBJDIR)/parse.o
 OBJS_CU=$(OBJDIR)/main.o  $(OBJDIR)/cudabins.o $(OBJDIR)/parse.o
 
