@@ -237,20 +237,20 @@ struct div_op : public thrust::unary_function<float,float>
     }
 };
 
-struct bin_relu_op : public thrust::unary_function<dev_bin,int>
+struct bin_relu_op : public thrust::unary_function<int,int>
 {
     int target_size, max_size;
-    dev_bin *base_pt;
+    dev_bin *bins;
     __device__
-    bin_relu_op(int target, int bin_size, dev_bin *bins) {
+    bin_relu_op(int target, int bin_size, dev_bin *dev_bins) {
         target_size = target;
         max_size = bin_size;
-        base_pt = bins;
+        bins = dev_bins;
     }
     __device__
-    int operator()(dev_bin b) {
-        if(b.occupancy + target_size <= max_size){
-            return (&b) - base_pt;
+    int operator()(int i) {
+        if(bins[i].occupancy + target_size <= max_size){
+            return i;
         } else {
             return INT_MAX;
         }

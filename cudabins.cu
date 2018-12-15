@@ -185,20 +185,13 @@ kernelBFD() {
         // Parallel reduction to find minimum index that fits this bin
         bin_relu_op bin_relu(obj.size, bin_size, bins);
 
-        printf("num_bins: %d\n", num_bins);
         thrust::tabulate(thrust::cuda::par, indices, &indices[num_bins],
                          bin_relu);
-        printf("Indices:");
-        for(int j = 0; j < num_bins; j++)
-            printf(" %d", indices[j]);
-        printf("\n");
 
         int fit_idx = thrust::reduce (thrust::cuda::par, indices, &indices[num_bins],
                                       INT_MAX, thrust::minimum<int>());
-        printf("Fit_idx: %d\n", fit_idx);
 
         if(fit_idx < INT_MAX){
-            printf("Found a fit\n");
             found_fit_flag = true;
             dev_bin *bin = &bins[fit_idx];
             bin->occupancy += obj.size;
