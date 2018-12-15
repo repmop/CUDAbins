@@ -13,7 +13,7 @@
 
 #include "cudabins.h"
 
-#define TRIALS 8
+#define TRIALS 128
 
 using namespace std;
 
@@ -298,8 +298,8 @@ void kernelWalkPack() {
         num_bins = globals.num_bins; // TODO: propagate updates to globals. not really necessary at this point though
 
         // Copy results of NF into shared buffer. TODO do this in parallel
-        for(size_t i = 0; i < num_bins; i++)
-            bins[i] = globals.bins[i];
+        // for(size_t i = 0; i < num_bins; i++)
+        //     bins[i] = globals.bins[i];
     }
 
     if(num_bins >= maxsize){
@@ -353,9 +353,11 @@ void kernelWalkPack() {
             }
 
             // Delete srcbin
+            bins[src].clear();
             for(size_t i = src; i < num_bins; i++){
                 bins[i] = bins[i+1];
             }
+            bins[num_bins-1] = dev_bin(0);
             num_bins--;
         }
         __syncthreads();
@@ -415,7 +417,7 @@ void kernelWalkPack() {
     }
 
     printf("Trial %d | Num bins: %lu\n", trial_id, num_bins);
-
+    /*
     // Parallel reduction
     if(thread_id == 0){
         // Level 0: all threads write num_bins to [0, TRIALS)
@@ -452,7 +454,7 @@ void kernelWalkPack() {
 
 
     // Sequential reduction
-    /*
+    / *
     if(trial_id == 0 && thread_id == 0){
         int best_trial_idx = 0;
         int best_trial_size = num_bins;
@@ -465,14 +467,15 @@ void kernelWalkPack() {
             }
         }
         *(params.best_trial) = best_trial_idx;
-    } */
+    } * /
 
     // Wait for thread 0 to finish the comparison
     while(*(params.best_trial) < 0);
-
+    */
+    if(thread_id == 0 && trial_id == 0){
     // Copy objects in order to obj_out
     // idx_out holds the indices into obj_out where each bin starts
-    if(thread_id == 0 && *(params.best_trial) == trial_id){
+      //    if(thread_id == 0 && *(params.best_trial) == trial_id){
         printf("Trial %d | Outputting (%lu bins)\n", trial_id, num_bins);
         size_t out_idx = 0;
         size_t bi;
@@ -496,7 +499,6 @@ void kernelWalkPack() {
     if(thread_id == 0){
         globals.clear();
     }
-    __syncthreads();
     return;
 }
 
