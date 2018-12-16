@@ -95,6 +95,7 @@ struct ghetto_vec {
         uint32_t lo = 0;               // arr[lo] < target
         uint32_t hi = num_entries - 1; // arr[hi] >= target
         uint32_t mid;
+        if (num_entries==0)  { return 0;  }
         if(arr[lo] >= target){ return lo; }
         if(arr[hi] <  target){ return hi; }
 
@@ -193,8 +194,10 @@ struct cudaGlobals {
     __device__
     cudaGlobals(int maxsize, int seed = SEED) {
         bins = (dev_bin *) malloc(sizeof(dev_bin) * maxsize);
-        if(bins == NULL)
+        if(bins == NULL) {
             printf("Failed to malloc bins\n");
+            assert(false);
+        }
 
         for (int i = 0; i < maxsize; i++) {
             //bins[i] = dev_bin(0); //dummy variable in constructor
@@ -232,7 +235,6 @@ struct fc_op : public thrust::binary_function<int,int,float>
     fc_op(int dummy) {}
     __device__
     float operator()(int x, int y) {
-        // printf("x: %i, y: %i\n", x, y);
         return ((float) x) + ((float) y);
     }
 };
