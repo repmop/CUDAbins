@@ -208,7 +208,7 @@ struct cudaGlobals {
 
     __device__
     float rand_f() {
-        return curand_uniform(&s);
+        return ((float) curand(&s)) / ((float) UINT32_MAX);
     }
     __device__
     uint32_t rand_i() {
@@ -265,17 +265,18 @@ struct div_op : public thrust::unary_function<float,float>
 
 struct bin_relu_op : public thrust::unary_function<int,int>
 {
-    int target_size, max_size;
+    int target_size, max_size, num_bins;
     dev_bin *bins;
     __device__
-    bin_relu_op(int target, int bin_size, dev_bin *dev_bins) {
+    bin_relu_op(int target, int bin_size, dev_bin *dev_bins, size_t n) {
         target_size = target;
         max_size = bin_size;
         bins = dev_bins;
+        num_bins = (int) n;
     }
     __device__
     int operator()(int i) {
-        if(bins[i].occupancy + target_size <= max_size){
+        if(i < num_bins && bins[i].occupancy + target_size <= max_size){
             return i;
         } else {
             return INT_MAX;

@@ -10,10 +10,11 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/binary_search.h>
 
 #include "cudabins.h"
 
-#define TRIALS 64
+#define TRIALS 1
 
 using namespace std;
 
@@ -82,18 +83,25 @@ T clamp(T x, T lower, T upper) {
 __device__
 uint32_t rand_empty(cudaGlobals *globals){
     ghetto_vec<float> ecdfs = globals->ecdfs;
-    uint32_t ret = ecdfs.upper_bound(globals->rand_f() / RAND_MAX - ecdfs[0]);
+    uint32_t ret = ecdfs.upper_bound(globals->rand_f());
     return clamp (ret, 0U, (uint32_t) globals->num_bins - 1);
 }
 
 // Select a random bin weighted in favor of full bins.
 __device__
 uint32_t rand_full(cudaGlobals *globals){
+    int num_bins = globals->num_bins;
     ghetto_vec<float> fcdfs = globals->fcdfs;
-    uint32_t ret = fcdfs.upper_bound(globals->rand_f() / RAND_MAX - fcdfs[0]);
-    return clamp (ret, 0U, (uint32_t) globals->num_bins - 1);
+    float target = globals->rand_f();
+    // uint32_t ret = fcdfs.seq_upper_bound(target);
+    uint32_t ret;
+    thrust::upper_bound(thrust::cuda::par, &fcdfs[0], &fcdfs[num_bins],
+                        &target, &target + 1,
+                        &ret);
+    ret = clamp (ret, 0U, (uint32_t) globals->num_bins - 1);
+    // printf("ret: %i, target: %f\n", ret, target);
+    return ret;
 }
-
 
 // Recalculate data structures used by rand_empty & _full based on current bins.
 __device__
@@ -125,12 +133,15 @@ void setup_rand(cudaGlobals *globals){
                       &fcdfs[0], fc_div);
     thrust::transform(thrust::cuda::par, &ecdfs[0], &ecdfs[num_bins],
                       &ecdfs[0], ec_div);
+    for (int i = 0; i < num_bins; i++) {
+        // printf("fcdfs[%i]: %f\n", i, fcdfs[i]);
+    }
 }
 
 // Fill bins using next-fit
 __device__
 void runNF (cudaGlobals *globals) {
-    //printf("Starting NF\n");
+    printf("Starting NF\n");
 
     obj *objs = params.objs;
     int bin_size = params.bin_size;
@@ -165,13 +176,76 @@ void runNF (cudaGlobals *globals) {
     }
 
     *num_bins = bi + 1;
-    //printf("NF done with %lu bins\n", *num_bins);
     return;
 }
 
+__device__ __inline__
+void my_tabulate(int *start, int n, bin_relu_op op) {
+    if (n==0) {
+        return;
+    }
+    int thread_id = threadIdx.x;
+    int num_threads = blockDim.x;
+    size_t ind_per_thread = (n + num_threads - 1) / num_threads;
+    size_t start_ind = thread_id * ind_per_thread;
+    size_t end_ind = (thread_id + 1) * ind_per_thread;
+    if (end_ind > start_ind + n) {
+        end_ind = start_ind + n;
+    }
+    if (thread_id >= n) {
+        end_ind = start_ind;
+    }
+    for (size_t i = start_ind; i < end_ind; i++) {
+        start[i] = op((int) i);
+    }
+}
 
+__device__ __inline__
+int my_min(int *start, int n) {
+    if (n==0) {
+        return INT_MAX;
+    }
+    int thread_id = threadIdx.x;
+    int num_threads = blockDim.x;
+    size_t ind_per_thread = (n + num_threads - 1) / num_threads;
+    size_t start_ind = thread_id * ind_per_thread;
+    size_t end_ind = (thread_id + 1) * ind_per_thread;
+    if (end_ind > start_ind + n) {
+        end_ind = start_ind + n;
+    }
+    if (thread_id >= n) {
+        end_ind = start_ind;
+    }
+    __shared__ int *minima;
+    if (thread_id == 0) {
+        minima = new int[num_threads];
+    }
+    int private_min = INT_MAX;
+    for (size_t i = start_ind; i < end_ind; i++) {
+        if (start[i] < private_min) {
+            private_min = start[i];
+        }
+    }
+    __syncthreads();
+    __shared__ int min;
+    minima[thread_id] = private_min;
+    __syncthreads();
+    if (thread_id==0) {
+        min = INT_MAX;
+        for (size_t i = 0; i < num_threads; i++) {
+            if (minima[i] < min) {
+                min = minima[i];
+            }
+        }
+        delete[] minima;
+    }
+    __syncthreads();
+    return min;
+}
 __global__
 void kernelBFD() {
+    int thread_id = threadIdx.x;
+
     int bin_size = params.bin_size;
     int num_objs = params.num_objs;
     int maxsize = params.maxsize;
@@ -180,84 +254,92 @@ void kernelBFD() {
     obj *obj_out = params.obj_out;
     size_t *idx_out = params.idx_out;
 
-    cudaGlobals globals = cudaGlobals(maxsize);
+    __shared__ cudaGlobals globals;
+    __shared__ size_t num_bins;
+    __shared__ int *indices;
+    __shared__ dev_bin *bins;
+    if(thread_id == 0){
+        globals = cudaGlobals(maxsize);
+        num_bins = 0;
+        indices = new int[maxsize];
+        bins = globals.bins;
+    }
 
-    dev_bin *&bins = globals.bins;
-    size_t &num_bins = globals.num_bins;
-
-    int *indices = new int[maxsize];
+    __syncthreads();
 
     // Sort objects decreasing
-    thrust::sort(thrust::cuda::par, objs, &objs[num_objs],
-        [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
+    if (thread_id == 0) {
+        thrust::sort(thrust::cuda::par, objs, &objs[num_objs],
+            [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
+    }
 
     // Put each object in the first bin it fits into
     for (size_t i = 0; i < num_objs; i++) {
-        obj obj = objs[i];
+        __syncthreads();
+        obj *obj = &objs[i];
 
         bool found_fit_flag = false;
 
         // Parallel reduction to find minimum index that fits this bin
-        bin_relu_op bin_relu(obj.size, bin_size, bins);
+        bin_relu_op bin_relu(obj->size, bin_size, bins, num_bins);
+        my_tabulate(indices, num_bins, bin_relu);
+        int fit_idx = my_min(indices, num_bins);
 
-        thrust::tabulate(thrust::cuda::par, indices, &indices[num_bins],
-                         bin_relu);
+        if (thread_id==0) {
+            if(fit_idx < INT_MAX){
+                found_fit_flag = true;
+                dev_bin *bin = &bins[fit_idx];
+                bin->occupancy += obj->size;
+                bin->obj_list.push_back(*obj);
 
-        int fit_idx = thrust::reduce (thrust::cuda::par, indices, &indices[num_bins],
-                                      INT_MAX, thrust::minimum<int>());
-
-        if(fit_idx < INT_MAX){
-            found_fit_flag = true;
-            dev_bin *bin = &bins[fit_idx];
-            bin->occupancy += obj.size;
-            bin->obj_list.push_back(obj);
-
-            check_bin(bin, bin_size, __LINE__);
-        }
-
-        // If you don't find any, make a new bin
-        if (!found_fit_flag) {
-            if (num_bins >= maxsize - 1) {
-                // printf("Mysterious\n");
-                *dev_retval_pt = -1;
-                return;
+                check_bin(bin, bin_size, __LINE__);
             }
 
-            // Make a new bin and put the object in it
-            dev_bin b = dev_bin(0);
-            b.occupancy = obj.size;
-            b.obj_list.push_back(obj);
+            // If you don't find any, make a new bin
+            if (!found_fit_flag) {
+                if (num_bins >= maxsize - 1) {
+                    *dev_retval_pt = -1;
+                    return;
+                }
 
-            // Add this bin to bins
-            bins[num_bins] = b;
-            num_bins++;
+                // Make a new bin and put the object in it
+                dev_bin b = dev_bin(0);
+                b.occupancy = obj->size;
+                b.obj_list.push_back(*obj);
+
+                // Add this bin to bins
+                bins[num_bins] = b;
+                num_bins++;
+            }
         }
+        __syncthreads();
     }
-
-    // Copy objects in order to obj_out
-    // idx_out holds the indices into obj_out where each bin starts
-    size_t out_idx = 0;
-    size_t bi;
-    for(bi = 0; bi < num_bins; bi++){
+    if (thread_id == 0) {
+        // Copy objects in order to obj_out
+        // idx_out holds the indices into obj_out where each bin starts
+        size_t out_idx = 0;
+        size_t bi;
+        for(bi = 0; bi < num_bins; bi++){
+            idx_out[bi] = out_idx;
+            for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
+                obj_out[out_idx] = bins[bi].obj_list.arr[oi];
+                out_idx++;
+            }
+        }
         idx_out[bi] = out_idx;
-        for(size_t oi = 0; oi < bins[bi].obj_list.size(); oi++){
-            obj_out[out_idx] = bins[bi].obj_list.arr[oi];
-            out_idx++;
+
+        for (size_t j = 0; j < num_bins; j++) {
+          check_bin(&bins[j], bin_size, __LINE__);
         }
+
+        // Return the number of bins
+        *dev_retval_pt = (int) num_bins;
+        printf("Finished, Num bins: %i\n", num_bins);
+
+        delete[] indices;
+
+        globals.clear();
     }
-    idx_out[bi] = out_idx;
-
-    for (size_t j = 0; j < num_bins; j++) {
-      check_bin(&bins[j], bin_size, __LINE__);
-    }
-
-    // Return the number of bins
-    *dev_retval_pt = (int) num_bins;
-    printf("Finished, Num bins: %i\n", num_bins);
-
-    delete[] indices;
-
-    globals.clear();
 
     return;
 }
@@ -288,8 +370,6 @@ void kernelWalkPack() {
     }
 
     dev_bin *bins = globals.bins;
-
-    // TODO: necessary? unlikely
     __syncthreads();
 
     // Start with next fit
@@ -316,7 +396,6 @@ void kernelWalkPack() {
     // This represents just one trial
     const int passes = 400;
     for(int pass = 0; pass < passes; pass++){
-
         // Optimize
         if (num_bins <= 1) {
             printf("Optimized to %d bins at the start of pass %d, breaking\n",
@@ -337,6 +416,7 @@ void kernelWalkPack() {
                 size_t dest;
                 const int retries = 1000; // How many destinations to try
 
+                // setup_rand(&globals);
                 for(int j = 0; j < retries; j++){
                     // Choose a destination other than the src
                     while(src == (dest = globals.rand_i() % num_bins));
@@ -373,9 +453,9 @@ void kernelWalkPack() {
         // }
 
         // Constrain
-        size_t bins_per_thread = (num_bins + blockDim.x - 1) / blockDim.x;
-        size_t start_bin = thread_id * bins_per_thread;
-        size_t end_bin = (thread_id + 1) * bins_per_thread;
+        // size_t bins_per_thread = (num_bins + blockDim.x - 1) / blockDim.x;
+        // size_t start_bin = thread_id * bins_per_thread;
+        // size_t end_bin = (thread_id + 1) * bins_per_thread;
         size_t old_num_bins = num_bins; // Freeze num_bins for the for loop
 
         // Constrain all the old bins
@@ -419,6 +499,8 @@ void kernelWalkPack() {
         }
         }
     }
+
+    printf("reducing\n");
 
     // Parallel reduction across blocks
     if(thread_id == 0){
@@ -553,7 +635,7 @@ void runBFD(){
     setup(p);
 
     // Run BFD
-    kernelBFD<<<1,1>>>();
+    kernelBFD<<<1,dim3(64, 1)>>>();
     cudaThreadSynchronize();
 
     cleanup(p);
@@ -568,7 +650,7 @@ void run() {
     setup(p);
 
     // Run WalkPack
-    int threads_per_trial = 4;
+    int threads_per_trial = 1;
     dim3 walkpack_block_dim(threads_per_trial, 1);
     dim3 walkpack_grid_dim (TRIALS, 1);
 
