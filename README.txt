@@ -1,4 +1,5 @@
 This repo implements a bin-packing optimizer as described in this paper: https://www.cs.rit.edu/~ark/students/amb4757/report.pdf written in C++11 and CUDA.
+This project was Mine and Maxwell Johnson's final project for 15-418 at CMU (Parallel Architecture).
 
 After cloning the repo, run:
 git clone https://github.com/open-source-parsers/jsoncpp.git
