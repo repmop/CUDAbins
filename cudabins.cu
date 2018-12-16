@@ -34,6 +34,8 @@ uint32_t host_num_bins;
 
 bin *bins_out;
 
+extern int threads_per_block;
+
 __host__
 int calculate_maxsize() {
     const float slip_ratio = .5f;
@@ -635,7 +637,7 @@ void runBFD(){
     setup(p);
 
     // Run BFD
-    kernelBFD<<<1,dim3(64, 1)>>>();
+    kernelBFD<<<1,dim3(threads_per_block, 1)>>>();
     cudaThreadSynchronize();
 
     cleanup(p);

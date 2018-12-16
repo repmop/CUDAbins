@@ -16,6 +16,8 @@ void usage() {
   fprintf(stderr, "-f /path/to/input [-o /path/to/output]\n");
 }
 
+int threads_per_block = 1;
+
 int main(int argc, char *argv[]) {
   char *infile = NULL;
   char *outfile = NULL;
@@ -23,7 +25,7 @@ int main(int argc, char *argv[]) {
   int opt;
   opterr = 0;
 
-  while ((opt = getopt(argc, argv, "f:o:b")) != -1) {
+  while ((opt = getopt(argc, argv, "f:o:bt:")) != -1) {
     switch (opt) {
       case 'f':
         infile = optarg;
@@ -34,10 +36,15 @@ int main(int argc, char *argv[]) {
       case 'b':
         bfd_flag = true;
         break;
+      case 't':
+        threads_per_block = atoi(optarg);
+        break;
       case '?':
         if (optopt == 'f') {
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         } else if (optopt == 'o') {
+          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+        } else if (optopt == 't') {
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         } else if (isprint (optopt)) {
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
