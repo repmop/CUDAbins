@@ -43,6 +43,8 @@ int calculate_maxsize() {
     for (size_t i = 0; i < host_num_objs; i++) {
         total_size += host_objs[i].size;
     }
+    printf("Theoretical Minimum number of bins: %i\n",
+           (total_size + host_bin_size - 1) / host_bin_size);
     return (int) ((float) total_size / (slip_ratio * host_bin_size));
 }
 
@@ -246,6 +248,9 @@ int my_min(int *start, int n) {
 }
 __global__
 void kernelBFD() {
+    clock_t clock();
+    long long sort_time, reduce_time, tab_time;
+    long long start = clock64();
     int thread_id = threadIdx.x;
 
     int bin_size = params.bin_size;
@@ -269,11 +274,14 @@ void kernelBFD() {
 
     __syncthreads();
 
+    long long t1 = clock64();
+
     // Sort objects decreasing
     if (thread_id == 0) {
         thrust::sort(thrust::cuda::par, objs, &objs[num_objs],
             [](const obj &a, const obj &b) -> bool { return a.size > b.size; });
     }
+    sort_time = clock64() - t1;
 
     // Put each object in the first bin it fits into
     for (size_t i = 0; i < num_objs; i++) {
@@ -284,8 +292,12 @@ void kernelBFD() {
 
         // Parallel reduction to find minimum index that fits this bin
         bin_relu_op bin_relu(obj->size, bin_size, bins, num_bins);
+        t1 = clock64();
         my_tabulate(indices, num_bins, bin_relu);
+        tab_time += clock64() - t1;
+        t1 = clock64();
         int fit_idx = my_min(indices, num_bins);
+        reduce_time += clock64() - t1;
 
         if (thread_id==0) {
             if(fit_idx < INT_MAX){
@@ -337,7 +349,10 @@ void kernelBFD() {
         // Return the number of bins
         *dev_retval_pt = (int) num_bins;
         printf("Finished, Num bins: %i\n", num_bins);
-
+        long long total = clock64() - start;
+        printf("sorting: %lf\n", ((double) sort_time) / ((double) total));
+        printf("tabing: %lf\n", ((double) tab_time) / ((double) total));
+        printf("reducing: %lf\n", ((double) reduce_time) / ((double) total));
         delete[] indices;
 
         globals.clear();
