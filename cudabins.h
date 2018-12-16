@@ -95,7 +95,7 @@ struct ghetto_vec {
         uint32_t lo = 0;               // arr[lo] < target
         uint32_t hi = num_entries - 1; // arr[hi] >= target
         uint32_t mid;
-        if (num_entries==0)  { return 0;  }
+        if(num_entries==0)   { return 0;  }
         if(arr[lo] >= target){ return lo; }
         if(arr[hi] <  target){ return hi; }
 

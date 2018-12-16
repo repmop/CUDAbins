@@ -1,12 +1,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <driver_functions.h>
-
-
 #include <assert.h>
-
 #include <random>
-
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
@@ -29,14 +25,9 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 __shared__ cudaGlobals globals;
-
-
 __constant__ cudaParams params;
-
 uint32_t host_num_bins;
-
 bin *bins_out;
-
 extern int threads_per_block;
 
 __host__
@@ -174,11 +165,9 @@ void runNF () {
                 *num_bins = maxsize;
                 return;
             }
-
             b = &(bins[bi]);
             *b = dev_bin(0);
         }
-
         b->obj_list.push_back(*o);
         b->occupancy += o->size;
     }
@@ -456,7 +445,6 @@ void kernelWalkPack() {
         // All new bins must not be overfull
         if(thread_id == 0){
             for (size_t i = 0; i < old_num_bins; i++) {
-              //for (size_t i = start_bin; i < end_bin && i < old_num_bins; i++) {
                 dev_bin *bin = &bins[i];
                 dev_bin *newbin;
 

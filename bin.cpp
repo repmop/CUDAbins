@@ -23,8 +23,6 @@ vector<bin_t> bins;
 vector<bin_t> best_bins;
 vector<float> ecdfs; // CDF of empty space
 vector<float> fcdfs; // CDF of full space
-// For int-based version
-//vector<uint32_t> fcdfs; // CDF of full space
 uint32_t fcdf_max;
 alias *alias_table;
 
@@ -137,7 +135,7 @@ void setup_rand(){
         fcdfs[i] = fcdf;
     }
     // Make the final value (bins.size() - 1) greater than 1
-    //  so upper_bound doesn't break
+    // so upper_bound doesn't break
     ecdfs[i] = 2.f;
     fcdfs[i] = 2.f;
 }
@@ -196,20 +194,6 @@ uint32_t rand_full(){
     assert(ret < bins.size());
     return ret;
 }
-/* int-based version
-uint32_t rand_full(){
-    size_t ret;
-    if(fcdf_max == 0) {
-        ret = rand() % bins.size();
-    } else {
-        ret = upper_bound(fcdfs.begin(), fcdfs.end(), rand() % fcdf_max)
-                      - fcdfs.begin();
-    }
-    assert(0 <= ret);
-    assert(ret < bins.size());
-    return ret;
-}
-*/
 
 int overflow_count = 0;
 int trial_count = 0;
@@ -247,16 +231,6 @@ void optimize() {
 
     // Delete srcbin
     bins.erase(bins.begin() + src);
-
-    // TODO: only constrain the bins that need constraining
-    // if(src < dest){
-    //     dest--;
-    // }
-
-    // if(bins[dest].occupancy > bin_size){
-    //     overflow_count++;
-    //     constrain_bin(dest);
-    // }
     constrain();
 }
 
@@ -313,21 +287,12 @@ void runNF() {
 }
 
 void run() {
-    // bins.push_back(*make_bin(&objs[0]));
-    // for (size_t i = 1; i < num_objs; i++) {
-    //     obj_t obj = objs[i];
-    //     bins[0].obj_list.push_back(obj);
-    //     bins[0].occupancy += obj.size;
-    // }
-    // constrain();
-
     objs = host_objs;
     num_objs = host_num_objs;
     bin_size = host_bin_size;
     total_obj_size = host_total_obj_size;
 
     runNF();
-    srand(123412341);
     const int bins_per_pass = 1;
     const int passes = 1000;
     const int trials = 50;
@@ -342,7 +307,6 @@ void run() {
                 }
             }
         }
-
         if (bins.size() < best_size) {
             printf("Size %d\n", (int)bins.size());
             best_bins = bins;
@@ -354,8 +318,6 @@ void run() {
 
     bins_out = &bins[0];
     host_num_bins = bins.size();
-
     printf("Overflow: %d / %d\n", overflow_count, trial_count);
-
     return;
 }

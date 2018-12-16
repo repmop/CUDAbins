@@ -15,8 +15,6 @@ ARCH=$(shell uname | sed -e 's/-.*//g')
 OBJDIR=objs
 
 CXX=g++ -m64 -std=c++11
-# CXX=g++ -m64 -std=c++11
-
 CXXFLAGS=-O3 -Wall
 ifeq ($(ARCH), Darwin)
 # Building on mac
@@ -28,8 +26,6 @@ endif
 
 
 NVCC=nvcc
-# NVCC=nvcc --compiler-options -Wall
-
 NVCCFLAGS=-O3 -m64 -arch=sm_60 -std=c++11
 OBJS=$(OBJDIR)/main.o  $(OBJDIR)/bin.o $(OBJDIR)/parse.o
 OBJS_CU=$(OBJDIR)/main.o  $(OBJDIR)/cudabins.o $(OBJDIR)/parse.o
